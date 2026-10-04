@@ -1,0 +1,12 @@
+# Logs
+.log
+*.log
+
+# Matrix datasets
+/matrix/
+
+# Build artifacts
+*.o
+*.a
+*.so
+/lu_cmd
