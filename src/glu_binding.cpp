@@ -21,16 +21,20 @@ namespace py = pybind11;
 class GLUFactorization {
 public:
     GLUFactorization(
-        py::array_t<double,  py::array::c_contiguous> data,
-        py::array_t<int32_t, py::array::c_contiguous> indices,
-        py::array_t<int32_t, py::array::c_contiguous> indptr,
+        py::array_t<double,  py::array::c_style> data,
+        py::array_t<int32_t, py::array::c_style> indices,
+        py::array_t<int32_t, py::array::c_style> indptr,
         int n_dim,
-        bool perturb);
+        bool perturb,
+        const std::string &update_strategy,
+        const std::string &scheduling);
 
     py::array_t<double> solve(
-        py::array_t<double, py::array::c_contiguous> b);
+        py::array_t<double, py::array::c_style> b);
 
     unsigned int n() const { return m_n; }
+    const char *update_strategy() const { return UpdateStrategyName(m_update_strategy); }
+    const char *scheduling() const { return SchedulingStrategyName(m_scheduling); }
 
     ~GLUFactorization();
 
@@ -38,16 +42,23 @@ private:
     SNicsLU          *m_nicslu = nullptr;
     Symbolic_Matrix  *m_sym    = nullptr;
     unsigned          m_n      = 0;
+    UpdateStrategy    m_update_strategy = UpdateStrategy::RightLooking;
+    SchedulingStrategy m_scheduling = SchedulingStrategy::Level;
 };
 
 
 GLUFactorization::GLUFactorization(
-    py::array_t<double,  py::array::c_contiguous> data,
-    py::array_t<int32_t, py::array::c_contiguous> indices,
-    py::array_t<int32_t, py::array::c_contiguous> indptr,
+    py::array_t<double,  py::array::c_style> data,
+    py::array_t<int32_t, py::array::c_style> indices,
+    py::array_t<int32_t, py::array::c_style> indptr,
     int n_dim,
-    bool perturb)
+    bool perturb,
+    const std::string &update_strategy,
+    const std::string &scheduling)
 {
+    m_update_strategy = ParseUpdateStrategy(update_strategy);
+    m_scheduling = ParseSchedulingStrategy(scheduling);
+    ValidateNumericConfiguration(m_update_strategy, m_scheduling);
     if (n_dim <= 0)
         throw std::invalid_argument("n must be positive");
 
@@ -106,7 +117,8 @@ GLUFactorization::GLUFactorization(
     m_sym->fill_in(ai_out, ap_out);
     m_sym->csr();
     m_sym->predictLU(ai_out, ap_out, ax_out);
-    m_sym->leveling();
+    if (m_scheduling == SchedulingStrategy::Level)
+        m_sym->leveling();
 
     /* CSC arrays no longer needed after symbolic phase */
     std::free(ax_out);
@@ -114,22 +126,25 @@ GLUFactorization::GLUFactorization(
     std::free(ap_out);
 
     /* GPU factorization — overwrites m_sym->val with LU factors */
-    LUonDevice(*m_sym, out_ss, err_ss, perturb);
+    LUonDevice(*m_sym, out_ss, err_ss, perturb, m_update_strategy, m_scheduling);
 
     /* Surface device-factorization errors reported by the GPU backend. */
     std::string err_msg = err_ss.str();
     if (!err_msg.empty()) {
-        bool bad = false;
-        for (REAL v : m_sym->val)
-            if (std::isnan(v) || std::isinf(v)) { bad = true; break; }
-        if (bad)
-            throw std::runtime_error("GPU factorization failed: " + err_msg);
+        // A runtime/launch failure can leave finite, unfactorized values.
+        // Surface all backend errors rather than returning an invalid solver.
+        delete m_sym;
+        m_sym = nullptr;
+        NicsLU_Destroy(m_nicslu);
+        std::free(m_nicslu);
+        m_nicslu = nullptr;
+        throw std::runtime_error("GPU factorization failed: " + err_msg);
     }
 }
 
 
 py::array_t<double> GLUFactorization::solve(
-    py::array_t<double, py::array::c_contiguous> b_arr)
+    py::array_t<double, py::array::c_style> b_arr)
 {
     if (static_cast<unsigned>(b_arr.shape(0)) != m_n)
         throw std::invalid_argument(
@@ -176,16 +191,20 @@ PYBIND11_MODULE(_pyglu, m) {
         Constructed by pyglu.splu(). Call .solve(b) to solve Ax=b.
         )")
         .def(py::init<
-                py::array_t<double,  py::array::c_contiguous>,
-                py::array_t<int32_t, py::array::c_contiguous>,
-                py::array_t<int32_t, py::array::c_contiguous>,
+                py::array_t<double,  py::array::c_style>,
+                py::array_t<int32_t, py::array::c_style>,
+                py::array_t<int32_t, py::array::c_style>,
                 int,
-                bool>(),
+                bool,
+                const std::string &,
+                const std::string &>(),
             py::arg("data"),
             py::arg("indices"),
             py::arg("indptr"),
             py::arg("n"),
             py::arg("perturb") = false,
+            py::arg("update_strategy") = "right-looking",
+            py::arg("scheduling") = "level",
             R"(Factorize a sparse matrix given in CSC format.
 
             Parameters
@@ -195,6 +214,8 @@ PYBIND11_MODULE(_pyglu, m) {
             indptr  : ndarray, int32, shape (n+1,)   — column pointers
             n       : int                            — matrix dimension
             perturb : bool                           — enable GESP perturbation
+            update_strategy : str                    — right-looking or left-looking
+            scheduling : str                         -- level or synchronization-free (LL only)
             )")
         .def("solve", &GLUFactorization::solve, py::arg("b"),
             R"(Solve Ax = b.
@@ -208,5 +229,9 @@ PYBIND11_MODULE(_pyglu, m) {
             x : ndarray, float64, shape (n,)
             )")
         .def_property_readonly("n", &GLUFactorization::n,
-            "Matrix dimension.");
+            "Matrix dimension.")
+        .def_property_readonly("update_strategy", &GLUFactorization::update_strategy,
+            "Canonical name of the numeric update strategy.")
+        .def_property_readonly("scheduling", &GLUFactorization::scheduling,
+            "Canonical name of the numeric scheduling strategy.");
 }

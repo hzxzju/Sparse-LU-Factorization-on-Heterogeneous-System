@@ -1,7 +1,10 @@
 #include <hc_runtime.h>
 #include <iostream>
-#include "symbolic.h"
+#include "numeric.h"
+#include "left_looking.cuh"
+#include "left_looking_sf.cuh"
 #include <cmath>
+#include <algorithm>
 #include <limits>
 
 using namespace std;
@@ -356,8 +359,18 @@ __global__ void RL_onecol_cleartmpMem(
     }
 }
 
-void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB)
+void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB,
+                UpdateStrategy update_strategy, SchedulingStrategy scheduling,
+                unsigned sf_workers)
 {
+    try {
+        ValidateNumericConfiguration(update_strategy, scheduling);
+    } catch (const std::invalid_argument &e) {
+        err << e.what() << endl;
+        return;
+    }
+    const bool left_looking = update_strategy == UpdateStrategy::LeftLooking;
+    const bool sync_free = scheduling == SchedulingStrategy::SynchronizationFree;
     if (A_sym.n == 0 || A_sym.nnz == 0) {
         err << "Matrix is empty; skipping GPU factorization." << endl;
         return;
@@ -376,6 +389,34 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     unsigned n = A_sym.n;
     unsigned nnz = A_sym.nnz;
     unsigned num_lev = A_sym.num_lev;
+
+    if (sync_free) {
+        // CPU fill_in owns structural analysis. Validate its contract before
+        // launching a kernel whose progress relies on strictly earlier inputs.
+        if (A_sym.sym_c_ptr.size() != size_t(n) + 1 ||
+            A_sym.sym_r_idx.size() != nnz || A_sym.val.size() != nnz ||
+            A_sym.l_col_ptr.size() != n || A_sym.sym_c_ptr.front() != 0 ||
+            A_sym.sym_c_ptr.back() != nnz) {
+            err << "Invalid CPU symbolic CSC structure for LL-SF." << endl;
+            return;
+        }
+        for (unsigned k = 0; k < n; ++k) {
+            const unsigned begin = A_sym.sym_c_ptr[k], end = A_sym.sym_c_ptr[k + 1];
+            const unsigned diag = A_sym.l_col_ptr[k];
+            if (begin >= end || end > nnz || diag < begin || diag >= end ||
+                A_sym.sym_r_idx[diag] != k) {
+                err << "Invalid CPU symbolic diagonal for LL-SF." << endl;
+                return;
+            }
+            for (unsigned p = begin; p < end; ++p) {
+                if (A_sym.sym_r_idx[p] >= n ||
+                    (p > begin && A_sym.sym_r_idx[p - 1] >= A_sym.sym_r_idx[p])) {
+                    err << "LL-SF requires sorted, unique symbolic CSC rows." << endl;
+                    return;
+                }
+            }
+        }
+    }
 
     int deviceCount = 0;
     if (!hcCheck(hcGetDeviceCount(&deviceCount), "hcGetDeviceCount"))
@@ -404,12 +445,15 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     if (!hcCheck(hcSetDevice(dev), "hcSetDevice"))
         return;
     out << "Device " << dev << ": " << deviceProp.name << " has been selected." << endl;
+    out << "Numeric update strategy: " << UpdateStrategyName(update_strategy) << endl;
+    out << "Numeric scheduling: " << SchedulingStrategyName(scheduling) << endl;
 
     hcEvent_t start = nullptr, stop = nullptr;
     unsigned *sym_c_ptr_dev = nullptr, *sym_r_idx_dev = nullptr, *l_col_ptr_dev = nullptr;
     REAL *val_dev = nullptr;
     unsigned *csr_r_ptr_dev = nullptr, *csr_c_idx_dev = nullptr, *csr_diag_ptr_dev = nullptr;
     int *level_idx_dev = nullptr;
+    unsigned *next_col_dev = nullptr, *done_dev = nullptr;
     REAL *tmpMem = nullptr;
     float time = 0.0f;
 
@@ -440,6 +484,10 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
             hcFree(csr_diag_ptr_dev);
         if (level_idx_dev != nullptr)
             hcFree(level_idx_dev);
+        if (next_col_dev != nullptr)
+            hcFree(next_col_dev);
+        if (done_dev != nullptr)
+            hcFree(done_dev);
         if (start != nullptr)
             hcEventDestroy(start);
         if (stop != nullptr)
@@ -464,10 +512,17 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     HC_RETURN_ON_ERR(hcMalloc((void**)&sym_r_idx_dev, nnz * sizeof(unsigned)), "hcMalloc(sym_r_idx_dev)");
     HC_RETURN_ON_ERR(hcMalloc((void**)&val_dev, nnz * sizeof(REAL)), "hcMalloc(val_dev)");
     HC_RETURN_ON_ERR(hcMalloc((void**)&l_col_ptr_dev, n * sizeof(unsigned)), "hcMalloc(l_col_ptr_dev)");
-    HC_RETURN_ON_ERR(hcMalloc((void**)&csr_r_ptr_dev, (n + 1) * sizeof(unsigned)), "hcMalloc(csr_r_ptr_dev)");
-    HC_RETURN_ON_ERR(hcMalloc((void**)&csr_c_idx_dev, nnz * sizeof(unsigned)), "hcMalloc(csr_c_idx_dev)");
-    HC_RETURN_ON_ERR(hcMalloc((void**)&csr_diag_ptr_dev, n * sizeof(unsigned)), "hcMalloc(csr_diag_ptr_dev)");
-    HC_RETURN_ON_ERR(hcMalloc((void**)&level_idx_dev, n * sizeof(int)), "hcMalloc(level_idx_dev)");
+    if (!left_looking) {
+        HC_RETURN_ON_ERR(hcMalloc((void**)&csr_r_ptr_dev, (n + 1) * sizeof(unsigned)), "hcMalloc(csr_r_ptr_dev)");
+        HC_RETURN_ON_ERR(hcMalloc((void**)&csr_c_idx_dev, nnz * sizeof(unsigned)), "hcMalloc(csr_c_idx_dev)");
+        HC_RETURN_ON_ERR(hcMalloc((void**)&csr_diag_ptr_dev, n * sizeof(unsigned)), "hcMalloc(csr_diag_ptr_dev)");
+    }
+    if (!sync_free)
+        HC_RETURN_ON_ERR(hcMalloc((void**)&level_idx_dev, n * sizeof(int)), "hcMalloc(level_idx_dev)");
+    else {
+        HC_RETURN_ON_ERR(hcMalloc((void**)&next_col_dev, sizeof(unsigned)), "hcMalloc(next_col_dev)");
+        HC_RETURN_ON_ERR(hcMalloc((void**)&done_dev, size_t(n) * sizeof(unsigned)), "hcMalloc(done_dev)");
+    }
 
     // hcMemcpy is blocking in HTHPCC; each upload completes before kernels use it.
     HC_RETURN_ON_ERR(hcMemcpy(sym_c_ptr_dev, &(A_sym.sym_c_ptr[0]), (n + 1) * sizeof(unsigned), hcMemcpyHostToDevice),
@@ -477,16 +532,25 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     HC_RETURN_ON_ERR(hcMemcpy(val_dev, &(A_sym.val[0]), nnz * sizeof(REAL), hcMemcpyHostToDevice), "hcMemcpy(val_dev)");
     HC_RETURN_ON_ERR(hcMemcpy(l_col_ptr_dev, &(A_sym.l_col_ptr[0]), n * sizeof(unsigned), hcMemcpyHostToDevice),
         "hcMemcpy(l_col_ptr_dev)");
-    HC_RETURN_ON_ERR(hcMemcpy(csr_r_ptr_dev, &(A_sym.csr_r_ptr[0]), (n + 1) * sizeof(unsigned), hcMemcpyHostToDevice),
-        "hcMemcpy(csr_r_ptr_dev)");
-    HC_RETURN_ON_ERR(hcMemcpy(csr_c_idx_dev, &(A_sym.csr_c_idx[0]), nnz * sizeof(unsigned), hcMemcpyHostToDevice),
-        "hcMemcpy(csr_c_idx_dev)");
-    HC_RETURN_ON_ERR(hcMemcpy(csr_diag_ptr_dev, &(A_sym.csr_diag_ptr[0]), n * sizeof(unsigned), hcMemcpyHostToDevice),
-        "hcMemcpy(csr_diag_ptr_dev)");
-    HC_RETURN_ON_ERR(hcMemcpy(level_idx_dev, &(A_sym.level_idx[0]), n * sizeof(int), hcMemcpyHostToDevice),
-        "hcMemcpy(level_idx_dev)");
+    if (!left_looking) {
+        HC_RETURN_ON_ERR(hcMemcpy(csr_r_ptr_dev, &(A_sym.csr_r_ptr[0]), (n + 1) * sizeof(unsigned), hcMemcpyHostToDevice),
+            "hcMemcpy(csr_r_ptr_dev)");
+        HC_RETURN_ON_ERR(hcMemcpy(csr_c_idx_dev, &(A_sym.csr_c_idx[0]), nnz * sizeof(unsigned), hcMemcpyHostToDevice),
+            "hcMemcpy(csr_c_idx_dev)");
+        HC_RETURN_ON_ERR(hcMemcpy(csr_diag_ptr_dev, &(A_sym.csr_diag_ptr[0]), n * sizeof(unsigned), hcMemcpyHostToDevice),
+            "hcMemcpy(csr_diag_ptr_dev)");
+    }
+    if (!sync_free)
+        HC_RETURN_ON_ERR(hcMemcpy(level_idx_dev, &(A_sym.level_idx[0]), n * sizeof(int), hcMemcpyHostToDevice),
+            "hcMemcpy(level_idx_dev)");
+    else {
+        // Default-stream initialization precedes the default-stream SF launch.
+        // These states are reset on every factorization, including reused CSC.
+        HC_RETURN_ON_ERR(hcMemset(next_col_dev, 0, sizeof(unsigned)), "hcMemset(next_col_dev)");
+        HC_RETURN_ON_ERR(hcMemset(done_dev, 0, size_t(n) * sizeof(unsigned)), "hcMemset(done_dev)");
+    }
 
-    for (int j = 0; j < Nstreams; ++j) {
+    for (int j = 0; !left_looking && j < Nstreams; ++j) {
         HC_RETURN_ON_ERR(hcStreamCreate(&streams[j]), "hcStreamCreate");
         stream_created[j] = true;
     }
@@ -503,6 +567,26 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         err << "Temporary matrix size overflows size_t." << endl;
         cleanup();
         return;
+    }
+    if (sync_free) {
+        // Device properties below are documented in the HTHPCC guide. Two
+        // workers/MP is a starting heuristic, not an occupancy guarantee.
+        // Progress does not depend on all workers being resident at once.
+        const size_t mp_count = deviceProp.multiProcessorCount > 0
+            ? static_cast<size_t>(deviceProp.multiProcessorCount) : 1;
+        size_t requested = sf_workers ? sf_workers : 2 * mp_count;
+        const size_t workspace_budget = std::min<size_t>(256u * 1024u * 1024u,
+                                                        deviceProp.totalGlobalMem / 16);
+        const size_t budget_slots = std::max<size_t>(1, workspace_budget / (size_t(n) * sizeof(REAL)));
+        requested = std::min<size_t>(requested, std::min<size_t>(n, budget_slots));
+        if (deviceProp.maxGridSize[0] > 0)
+            requested = std::min<size_t>(requested, deviceProp.maxGridSize[0]);
+        TMPMEMNUM = static_cast<unsigned>(std::max<size_t>(1, requested));
+        if (n > std::numeric_limits<unsigned>::max() - TMPMEMNUM) {
+            err << "LL-SF task counter would overflow." << endl;
+            cleanup();
+            return;
+        }
     }
     // hcMemGetInfo is absent from the supplied guide, so probe allocations and
     // halve the batch on failure. This preserves bounded memory use without
@@ -533,9 +617,10 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     }
     // hcMalloc does not zero memory; clear explicitly to preserve CUDA semantics.
     HC_RETURN_ON_ERR(hcMemset(tmpMem, 0, tmp_bytes), "hcMemset(tmpMem)");
-    // hcMemset uses the default stream. Wait before the first kernels run on
-    // independently created streams; the guide guarantees only same-stream order.
-    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem init)");
+    // Only RL uses independently created streams. LL initialization and launch
+    // are ordered on the default stream, including the SF flags/counter.
+    if (!left_looking)
+        HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem init)");
 
     // calculate 1-norm of A and perturbation value for perturbation
     REAL pert = 0;
@@ -602,14 +687,54 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         }
     };
 
-    for (unsigned i = 0; i < num_lev; ++i)
+    if (sync_free) {
+        const unsigned ll_threads = maxWaveAlignedThreads < 256
+            ? static_cast<unsigned>(maxWaveAlignedThreads) : 256u;
+        out << "LL-SF workers: " << TMPMEMNUM << ", workspace bytes: " << tmp_bytes << endl;
+        LL_factorizeSyncFree<<<TMPMEMNUM, ll_threads>>>(sym_c_ptr_dev,
+                                                      sym_r_idx_dev,
+                                                      val_dev,
+                                                      l_col_ptr_dev,
+                                                      tmpMem,
+                                                      next_col_dev,
+                                                      done_dev,
+                                                      n, PERTURB, pert);
+        HC_RETURN_ON_ERR(hcGetLastError(), "LL-SF kernel launch");
+        HC_RETURN_ON_ERR(hcDeviceSynchronize(), "LL-SF completion");
+    }
+
+    for (unsigned i = 0; !sync_free && i < num_lev; ++i)
     {
         int lev_size = A_sym.level_ptr[i + 1] - A_sym.level_ptr[i];
         if (lev_size <= 0)
             continue;
 
         // These inherited thresholds are CUDA-era tuning constants; tune on target hardware.
-        if (lev_size > 896) {
+        if (left_looking) {
+            // One block per target column; bound dense workspace use by the
+            // same allocation-probed batch size as RL. Same-stream ordering
+            // protects workspace reuse between chunks, and the level barrier
+            // below publishes completed L columns to their dependent levels.
+            const unsigned ll_threads = maxWaveAlignedThreads < 256
+                ? static_cast<unsigned>(maxWaveAlignedThreads) : 256u;
+            for (unsigned offset = 0; offset < static_cast<unsigned>(lev_size);) {
+                const unsigned remaining = static_cast<unsigned>(lev_size) - offset;
+                const unsigned batch = remaining < TMPMEMNUM ? remaining : TMPMEMNUM;
+                LL_factorizeColumns<<<batch, ll_threads>>>(sym_c_ptr_dev,
+                                                          sym_r_idx_dev,
+                                                          val_dev,
+                                                          l_col_ptr_dev,
+                                                          level_idx_dev,
+                                                          tmpMem,
+                                                          n,
+                                                          A_sym.level_ptr[i],
+                                                          offset,
+                                                          PERTURB,
+                                                          pert);
+                offset += batch;
+            }
+        }
+        else if (lev_size > 896) {
             // Values count waves; block size below multiplies by HTHPCC's 64 lanes/wave.
             launch_batched_level(A_sym.level_ptr[i], lev_size, 2);
         }

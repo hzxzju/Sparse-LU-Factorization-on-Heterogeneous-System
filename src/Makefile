@@ -24,13 +24,13 @@ lu_cmd: Timer.o numeric.o symbolic.o lu_cmd.o $(PREPROCESS_LIBS)
 Timer.o: Timer.cpp
 	$(CPP) $(CFLAGS) -c $< -o $@
 
-numeric.o: numeric.cu
+numeric.o: numeric.cu left_looking.cuh left_looking_sf.cuh sf_sync.cuh ../include/numeric.h ../include/symbolic.h ../include/type.h
 	$(HTCC) $(HTCCFLAGS) -c $< -o $@
 
 symbolic.o: symbolic.cc
 	$(CPP) $(CFLAGS) -c $< -o $@
 
-lu_cmd.o: lu_cmd.cpp
+lu_cmd.o: lu_cmd.cpp ../include/numeric.h
 	$(CPP) $(CFLAGS) -c $< -o $@
 
 preprocess/preprocess.o:

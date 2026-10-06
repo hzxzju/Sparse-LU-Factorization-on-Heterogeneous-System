@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 #include "symbolic.h"
 #include "numeric.h"
 #include "Timer.h"
@@ -20,6 +21,8 @@ void help_message()
     cout << "Usage: ./lu_cmd -i inputfile" << endl;
     cout << "Additional usage: ./lu_cmd -i inputfile -p" << endl;
     cout << "-p to enable perturbation" << endl;
+    cout << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
+    cout << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
 }
 
 int main(int argc, char** argv)
@@ -30,6 +33,8 @@ int main(int argc, char** argv)
 
     const char *matrixName = nullptr;
     bool PERTURB = false;
+    UpdateStrategy update_strategy = UpdateStrategy::RightLooking;
+    SchedulingStrategy scheduling = SchedulingStrategy::Level;
 
     double *ax = NULL, *ax_backup = NULL;
     unsigned int *ai = NULL, *ai_backup = NULL;
@@ -53,7 +58,33 @@ int main(int argc, char** argv)
         else if (strcmp(argv[i], "-p") == 0) {
             PERTURB = true;
             i += 1;
-        }        
+        }
+        else if (strcmp(argv[i], "-u") == 0 || strcmp(argv[i], "--update-strategy") == 0) {
+            if (i + 1 >= argc) {
+                help_message();
+                return -1;
+            }
+            try {
+                update_strategy = ParseUpdateStrategy(argv[i + 1]);
+            } catch (const std::invalid_argument &e) {
+                cerr << e.what() << endl;
+                return -1;
+            }
+            i += 2;
+        }
+        else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--scheduling") == 0) {
+            if (i + 1 >= argc) {
+                help_message();
+                return -1;
+            }
+            try {
+                scheduling = ParseSchedulingStrategy(argv[i + 1]);
+            } catch (const std::invalid_argument &e) {
+                cerr << e.what() << endl;
+                return -1;
+            }
+            i += 2;
+        }
         else {
             help_message();
             return -1;
@@ -62,6 +93,13 @@ int main(int argc, char** argv)
 
     if (matrixName == nullptr) {
         help_message();
+        return -1;
+    }
+
+    try {
+        ValidateNumericConfiguration(update_strategy, scheduling);
+    } catch (const std::invalid_argument &e) {
+        cerr << e.what() << endl;
         return -1;
     }
 
@@ -104,7 +142,8 @@ int main(int argc, char** argv)
     cout << "PredictLU time: " << utime << " ms" << endl;
 
     t.start();
-    A_sym.leveling();
+    if (scheduling == SchedulingStrategy::Level)
+        A_sym.leveling();
     t.elapsedUserTime(utime);
     cout << "Leveling time: " << utime << " ms" << endl;
 
@@ -114,7 +153,16 @@ int main(int argc, char** argv)
 #endif
 
     // Numeric factorization on GPU updates A_sym.val in place to LU factors.
-    LUonDevice(A_sym, cout, cerr, PERTURB);
+    std::ostringstream numeric_errors;
+    LUonDevice(A_sym, cout, numeric_errors, PERTURB, update_strategy, scheduling);
+    if (!numeric_errors.str().empty()) {
+        cerr << numeric_errors.str();
+        NicsLU_Destroy(nicslu);
+        free(nicslu);
+        free(ax); free(ai); free(ap);
+        free(ax_backup); free(ai_backup); free(ap_backup);
+        return -1;
+    }
 
 #if GLU_DEBUG
     A_sym.ABFTCheckResult();
