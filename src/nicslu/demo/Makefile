@@ -1,38 +1,29 @@
 include ../make.inc
-LIBS = -L. ../lib/nicslu.a ../util/nicslu_util.a -lrt -lpthread -lm
-INC = -I ../include/ -I ../util/
+GCC_TOOLCHAIN ?= $(HOME)/local/gcc-7.3.0/usr
+CC = $(GCC_TOOLCHAIN)/bin/gcc
+export GCC_TOOLCHAIN
+LIBS = ../lib/nicslu.a ../util/nicslu_util.a -lrt -lpthread -lm
+INC = -I../include -I../util
+PROGRAMS = demos demop test demos_time demop_time
+OBJS = $(PROGRAMS:=.o)
 
-all: demos demop test demos_time demop_time
+.PHONY: all clean
+.DELETE_ON_ERROR:
+all: $(PROGRAMS)
 
-test: test.o
-	$(CC) $(LFLAGS) -o test test.o $(LIBS)
+$(PROGRAMS): %: %.o ../lib/nicslu.a ../util/nicslu_util.a
+	$(CC) $(LFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
 
-test.o: test.c
-	$(CC) $(CFLAGS) -o test.o $(INC) test.c
+%.o: %.c Makefile ../make.inc
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(INC) -MMD -MP -o $@ $<
 
-demos_time: demos_time.o
-	$(CC) $(LFLAGS) -o demos_time demos_time.o $(LIBS)
+../lib/nicslu.a: $(wildcard ../source/*.c ../source/*.h ../include/*.h) ../lib/Makefile ../make.inc
+	$(MAKE) -C ../lib
 
-demos_time.o: demos_time.c
-	$(CC) $(CFLAGS) -o demos_time.o $(INC) demos_time.c
-
-demop_time: demop_time.o
-	$(CC) $(LFLAGS) -o demop_time demop_time.o $(LIBS)
-
-demop_time.o: demop_time.c
-	$(CC) $(CFLAGS) -o demop_time.o $(INC) demop_time.c
-
-demos: demos.o
-	$(CC) $(LFLAGS) -o demos demos.o $(LIBS)
-
-demos.o: demos.c
-	$(CC) $(CFLAGS) -o demos.o $(INC) demos.c
-
-demop: demop.o
-	$(CC) $(LFLAGS) -o demop demop.o $(LIBS)
-
-demop.o: demop.c
-	$(CC) $(CFLAGS) -o demop.o $(INC) demop.c
+../util/nicslu_util.a: $(wildcard ../util/*.c ../util/*.h ../include/*.h) ../util/Makefile ../make.inc
+	$(MAKE) -C ../util
 
 clean:
-	rm -f demos.o demos demop.o demop test.o test demos_time demos_time.o demop_time demop_time.o
+	rm -f $(OBJS) $(OBJS:.o=.d) $(PROGRAMS)
+
+-include $(OBJS:.o=.d)

@@ -1,6 +1,11 @@
 include ../make.inc
-MAKELIB = $(AR)
-COMPILE = $(CC) $(CFLAGS)
+GCC_TOOLCHAIN ?= $(HOME)/local/gcc-7.3.0/usr
+CC = $(GCC_TOOLCHAIN)/bin/gcc
+AR = ar
+ARFLAGS = rcs
+# The source-side nicslu.h has a malformed error macro. Load the correct
+# public header first; its shared include guard skips that duplicate.
+COMPILE = $(CC) $(CPPFLAGS) $(CFLAGS) -I../include -include ../include/nicslu.h -MMD -MP
 
 OBJS = nicslu_aegraph.o \
 nicslu_amd.o \
@@ -41,14 +46,18 @@ system.o \
 thread.o \
 timer_c.o
 
+.PHONY: all clean
+.DELETE_ON_ERROR:
 all: nicslu.a
 
 nicslu.a: ${OBJS}
-	$(MAKELIB) $@ $^
+	$(AR) $(ARFLAGS) $@ $^
 	$(RANLIB) $@
 
-%.o: ../source/%.c
+%.o: ../source/%.c Makefile ../make.inc
 	$(COMPILE) $< -o $@
 
 clean:
-	rm -f *.o nicslu.a
+	rm -f $(OBJS) $(OBJS:.o=.d) nicslu.a
+
+-include $(OBJS:.o=.d)

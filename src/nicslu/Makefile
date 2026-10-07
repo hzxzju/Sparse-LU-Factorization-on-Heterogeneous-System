@@ -1,18 +1,16 @@
-all:
-	(cd lib; make)
-	(cd util; make)
-	(cd demo; make)
+GCC_TOOLCHAIN ?= $(HOME)/local/gcc-7.3.0/usr
+export GCC_TOOLCHAIN
 
-lib:
-	(cd lib; make)
+.PHONY: all lib util demo clean
+all: lib util demo
 
-util:
-	(cd util; make)
+lib util:
+	$(MAKE) -C $@
 
-demo:
-	(cd demo; make)
+demo: lib util
+	$(MAKE) -C demo
 
 clean:
-	(cd lib; make clean)
-	(cd util; make clean)
-	(cd demo; make clean)
+	$(MAKE) -C lib clean
+	$(MAKE) -C util clean
+	$(MAKE) -C demo clean
