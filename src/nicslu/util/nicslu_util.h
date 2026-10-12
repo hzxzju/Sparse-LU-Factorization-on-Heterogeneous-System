@@ -21,7 +21,7 @@ int \
 	OUT__ uint__t **ai, \
 	OUT__ uint__t **ap);
 
-/*read triplet format to CSR or CSC, triplets are stored in row-wise*/
+/*read triplet format to CSR, accepting any input triplet order*/
 int \
 	NicsLU_ReadTripletRowToSparse( \
 	IN__ char *file, \

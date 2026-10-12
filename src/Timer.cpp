@@ -3,8 +3,8 @@
 int
 Timer::start()
 {
-    if (gettimeofday (&this->old_wc_time, 0) == -1
-        || getrusage (RUSAGE_SELF, &this->old_us_time) == -1)
+    this->old_wc_time = std::chrono::steady_clock::now();
+    if (getrusage (RUSAGE_SELF, &this->old_us_time) == -1)
         return -1;
     else
         return 0;
@@ -13,10 +13,8 @@ Timer::start()
 int
 Timer::elapsedWallclockTime (double &wc)
 {
-    if (gettimeofday (&this->new_wc_time, 0) == -1)
-        return -1;
-    wc = (this->new_wc_time.tv_sec - this->old_wc_time.tv_sec) * 1000.0
-         + (this->new_wc_time.tv_usec - this->old_wc_time.tv_usec) / 1000.0;
+    wc = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - this->old_wc_time).count();
     return 0;
 }
 

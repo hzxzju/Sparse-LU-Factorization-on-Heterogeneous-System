@@ -277,7 +277,7 @@ vector<REAL> Symbolic_Matrix::solve_CSR(SNicsLU *nicslu, const vector<REAL> &rhs
         }
     }
 
-    // Left-multiply inv(L) - lower triangular solve with diagonal division
+    // For B^T = L*U, solve U^T*y = b (non-unit diagonal).
     for (unsigned j = 0; j < n; ++j) {
         REAL sum = 0.0;
         unsigned diag = l_col_ptr[j];
@@ -288,7 +288,7 @@ vector<REAL> Symbolic_Matrix::solve_CSR(SNicsLU *nicslu, const vector<REAL> &rhs
         b[j] = (b[j] - sum) / val[diag];
     }
 
-    // Left-multiply inv(U) - upper triangular solve (no division, U diag already applied)
+    // Solve L^T*z = y (unit diagonal), giving B*z = b.
     for (int jj = n - 1; jj >= 0; --jj) {
         REAL sum = 0.0;
 

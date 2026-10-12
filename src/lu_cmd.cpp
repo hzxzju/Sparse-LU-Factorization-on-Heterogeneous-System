@@ -27,8 +27,10 @@ void help_message()
 
 int main(int argc, char** argv)
 {
-    Timer t;
-    double utime;
+    Timer t, total_timer, symbolic_timer;
+    double preprocess_ms = 0., symbolic_ms = 0., csr_ms = 0.;
+    double predict_ms = 0., leveling_ms = 0., symbolic_total_ms = 0.;
+    double numeric_ms = 0., solve_ms = 0., total_ms = 0.;
     SNicsLU *nicslu = nullptr;
 
     const char *matrixName = nullptr;
@@ -103,13 +105,17 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    // Task 1 S2: T_gpu is the complete heterogeneous solve wall time,
+    // including input preparation, CPU work, transfers and GPU synchronization.
+    total_timer.start();
     nicslu = static_cast<SNicsLU *>(malloc(sizeof(SNicsLU)));
     if (nicslu == nullptr) {
         cerr << "Failed to allocate NicsLU context." << endl;
         return -1;
     }
 
-    // Build a permutation/scaling-adjusted matrix and keep the numeric arrays in CSC.
+    // Keep the original matrix and the reordered/scaled matrix B in CSR.
+    t.start();
     int err = preprocess(matrixName, nicslu, &ax, &ai, &ap, &ax_backup, &ai_backup, &ap_backup, &nnz_backup);
     if (err)
     {
@@ -117,35 +123,35 @@ int main(int argc, char** argv)
         free(nicslu);
         return -1;
     }
+    t.elapsedWallclockTime(preprocess_ms);
 
     n = nicslu->n;
 
-    cout << "Matrix Row: " << n << endl;
-    cout << "Original nonzero: " << nicslu->nnz << endl;
-
+    // Buffer solver diagnostics so terminal output does not delay the solve.
+    std::ostringstream solver_output;
+    symbolic_timer.start();
     t.start();
 
-    // Symbolic analysis: fill-in prediction, CSR transpose, and level scheduling.
-    Symbolic_Matrix A_sym(n, cout, cerr);
+    // B's CSR arrays are also CSC arrays of B^T. Analyze and factor B^T;
+    // solve_CSR below uses the transpose factors to solve the original system.
+    Symbolic_Matrix A_sym(n, solver_output, cerr);
     A_sym.fill_in(ai, ap);
-    t.elapsedUserTime(utime);
-    cout << "Symbolic time: " << utime << " ms" << endl;
+    t.elapsedWallclockTime(symbolic_ms);
 
     t.start();
     A_sym.csr();
-    t.elapsedUserTime(utime);
-    cout << "CSR time: " << utime << " ms" << endl;
+    t.elapsedWallclockTime(csr_ms);
 
     t.start();
     A_sym.predictLU(ai, ap, ax);
-    t.elapsedUserTime(utime);
-    cout << "PredictLU time: " << utime << " ms" << endl;
+    t.elapsedWallclockTime(predict_ms);
 
-    t.start();
-    if (scheduling == SchedulingStrategy::Level)
+    if (scheduling == SchedulingStrategy::Level) {
+        t.start();
         A_sym.leveling();
-    t.elapsedUserTime(utime);
-    cout << "Leveling time: " << utime << " ms" << endl;
+        t.elapsedWallclockTime(leveling_ms);
+    }
+    symbolic_timer.elapsedWallclockTime(symbolic_total_ms);
 
 #if GLU_DEBUG
     A_sym.ABFTCalculateCCA();
@@ -154,8 +160,11 @@ int main(int argc, char** argv)
 
     // Numeric factorization on GPU updates A_sym.val in place to LU factors.
     std::ostringstream numeric_errors;
-    LUonDevice(A_sym, cout, numeric_errors, PERTURB, update_strategy, scheduling);
+    t.start();
+    LUonDevice(A_sym, solver_output, numeric_errors, PERTURB, update_strategy, scheduling);
+    t.elapsedWallclockTime(numeric_ms);
     if (!numeric_errors.str().empty()) {
+        cout << solver_output.str();
         cerr << numeric_errors.str();
         NicsLU_Destroy(nicslu);
         free(nicslu);
@@ -170,7 +179,30 @@ int main(int argc, char** argv)
 
     // Solve Ax=b with the computed factors and NICSLU permutations/scales.
     vector<REAL> b(n, 1.);
+    t.start();
     vector<REAL> x = A_sym.solve_CSR(nicslu, b);
+    t.elapsedWallclockTime(solve_ms);
+    // Factors have been copied back by blocking hcMemcpy inside LUonDevice;
+    // solve_CSR is synchronous CPU work. The result is now available on host.
+    total_timer.elapsedWallclockTime(total_ms);
+
+    cout << "Matrix Row: " << n << endl;
+    cout << "Original nonzero: " << nicslu->nnz << endl;
+    cout << solver_output.str();
+    std::ostringstream timing_output;
+    timing_output << std::fixed << std::setprecision(6)
+        << "Input/preprocessing time: " << preprocess_ms << " ms\n"
+        << "Symbolic time: " << symbolic_ms << " ms\n"
+        << "CSR time: " << csr_ms << " ms\n"
+        << "PredictLU time: " << predict_ms << " ms\n"
+        << "Leveling time: " << leveling_ms << " ms\n"
+        << "Symbolic preparation time (total): " << symbolic_total_ms << " ms\n"
+        << "Numeric LU time (including GPU setup/transfers): " << numeric_ms << " ms\n"
+        << "Triangular solve time (CPU): " << solve_ms << " ms\n"
+        << "Task 1 total solve time (T_gpu): " << total_ms << " ms\n";
+    cout << timing_output.str();
+
+    // Output serialization and residual verification are outside T_gpu.
     {
         ofstream x_f("x.dat");
         x_f << std::fixed << std::setprecision(10);

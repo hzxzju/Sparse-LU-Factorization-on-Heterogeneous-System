@@ -2,6 +2,7 @@
 #ifndef _TIMER_H_
 #define _TIMER_H_
 
+#include <chrono>
 #include <stdlib.h>
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -21,8 +22,8 @@ class Timer
 	private:
 	    rusage old_us_time;
 	    rusage new_us_time;
-	    timeval old_wc_time;
-	    timeval new_wc_time;
+	    // Monotonic wall time includes GPU waits and cannot jump with clock updates.
+	    std::chrono::steady_clock::time_point old_wc_time;
 };
 
 

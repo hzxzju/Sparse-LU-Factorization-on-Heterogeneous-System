@@ -233,7 +233,8 @@ int NicsLU_ReadTripletRowToSparse(char *file, uint__t *n, uint__t *nnz, \
 	FILE *fp;
 	int err;
 	uint__t m, *aj, i, j;
-	uint__t pre, cur, num;
+	uint__t *ordered_ai;
+	real__t *ordered_ax;
 	int cnt;
 
 	if (NULL == file || NULL == n || NULL == nnz \
@@ -280,18 +281,18 @@ int NicsLU_ReadTripletRowToSparse(char *file, uint__t *n, uint__t *nnz, \
 		if (aj != NULL) free(aj);
 		if (*ax != NULL)
 		{
-			*ax = NULL;
 			free(*ax);
+			*ax = NULL;
 		}
 		if (*ai != NULL)
 		{
-			*ai = NULL;
 			free(*ai);
+			*ai = NULL;
 		}
 		if (*ap != NULL)
 		{
-			*ap = NULL;
 			free(*ap);
+			*ap = NULL;
 		}
 		return NICSLU_MEMORY_OVERFLOW;
 	}
@@ -326,34 +327,35 @@ int NicsLU_ReadTripletRowToSparse(char *file, uint__t *n, uint__t *nnz, \
 	}
 	fclose(fp);
 
-	(*ap)[0] = 0;
-	pre = 0;
-	cur = 0;
-	num = 0;
+	/* Matrix Market entries need not be grouped by row (UF files commonly
+	   group by column). Count rows, then scatter both indices and values into
+	   CSR order instead of assuming monotonically increasing input rows. */
+	memset(*ap, 0, sizeof(uint__t)*(m+1));
+	for (i=0; i<*nnz; ++i) ++(*ap)[aj[i]+1];
+	for (i=1; i<=m; ++i) (*ap)[i] += (*ap)[i-1];
 
+	ordered_ai = (uint__t *)malloc(sizeof(uint__t)*(*nnz));
+	ordered_ax = (real__t *)malloc(sizeof(real__t)*(*nnz));
+	if (NULL == ordered_ai || NULL == ordered_ax)
+	{
+		free(ordered_ai);
+		free(ordered_ax);
+		free(aj);
+		return NICSLU_MEMORY_OVERFLOW;
+	}
 	for (i=0; i<*nnz; ++i)
 	{
-		cur = aj[i];
-		if (pre == cur)
-		{
-			++num;
-		}
-		else
-		{
-			num += (*ap)[pre];
-			for (j=pre+1; j<=cur; j++)
-			{
-				(*ap)[j] = num;
-			}
-			pre = cur;
-			num = 1;
-		}
+		j = (*ap)[aj[i]]++;
+		ordered_ai[j] = (*ai)[i];
+		ordered_ax[j] = (*ax)[i];
 	}
-	num += (*ap)[cur];
-	for (i=cur+1; i<=m; i++)
-	{
-		(*ap)[i] = num;
-	}
+	/* Scatter advanced each row start to its end; restore the starts. */
+	for (i=m; i>0; --i) (*ap)[i] = (*ap)[i-1];
+	(*ap)[0] = 0;
+	free(*ai);
+	free(*ax);
+	*ai = ordered_ai;
+	*ax = ordered_ax;
 
 	free(aj);
 	return NICS_OK;

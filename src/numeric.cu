@@ -1,4 +1,5 @@
 #include <hc_runtime.h>
+#include "Timer.h"
 #include <iostream>
 #include "numeric.h"
 #include "left_looking.cuh"
@@ -617,10 +618,9 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     }
     // hcMalloc does not zero memory; clear explicitly to preserve CUDA semantics.
     HC_RETURN_ON_ERR(hcMemset(tmpMem, 0, tmp_bytes), "hcMemset(tmpMem)");
-    // Only RL uses independently created streams. LL initialization and launch
-    // are ordered on the default stream, including the SF flags/counter.
-    if (!left_looking)
-        HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem init)");
+    // Drain initialization for every strategy before the compute-only timer.
+    // RL also needs this barrier before launching on its independent streams.
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem init)");
 
     // calculate 1-norm of A and perturbation value for perturbation
     REAL pert = 0;
@@ -686,6 +686,9 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
             ++chunk_idx;
         }
     };
+
+    Timer numeric_timer;
+    numeric_timer.start();
 
     if (sync_free) {
         const unsigned ll_threads = maxWaveAlignedThreads < 256
@@ -799,6 +802,12 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize");
     }
 
+    // Every path above synchronizes all factorization work, including RL's
+    // multiple streams. This wall time includes launches and level barriers,
+    // but excludes allocation, initialization and host/device transfers.
+    double numeric_compute_ms = 0.;
+    numeric_timer.elapsedWallclockTime(numeric_compute_ms);
+
     HC_RETURN_ON_ERR(hcMemcpy(&(A_sym.val[0]), val_dev, nnz * sizeof(REAL), hcMemcpyDeviceToHost),
         "hcMemcpy(A_sym.val)");
     HC_RETURN_ON_ERR(hcEventRecord(stop), "hcEventRecord(stop)");
@@ -806,6 +815,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     HC_RETURN_ON_ERR(hcEventElapsedTime(&time, start, stop), "hcEventElapsedTime");
 
     out << "Total GPU time: " << time << " ms" << endl;
+    out << "Numeric LU compute time (wall-clock): " << numeric_compute_ms << " ms" << endl;
 
 #ifdef GLU_DEBUG
     // check NaN elements

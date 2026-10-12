@@ -158,11 +158,11 @@ int preprocess(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned in
     ret = NicsLU_CreateMatrix(nicslu, n, nnz, *ax, *ai, *ap);
     if (ret != NICS_OK)
     {
-        printf("Create matrix error\n");
+        printf("Create matrix error (NICSLU code %d)\n", ret);
         goto EXIT;
     }
 
-    nicslu->cfgi[0] = 1;
+    nicslu->cfgi[0] = 0; /* CSR input; NICSLU solve/residual use this mode. */
     nicslu->cfgf[1] = 0;
 
     printf("Preprocessing matrix...\n");

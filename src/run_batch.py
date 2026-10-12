@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Run lu_cmd sequentially and collect stage timings and residuals."""
+
+import argparse
+import csv
+from datetime import datetime
+import math
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+SOURCE_DIR = Path(__file__).resolve().parent
+METRICS = {
+    "Matrix Row:": ("n", int),
+    "Original nonzero:": ("nnz", int),
+    "Input/preprocessing time:": ("preprocessing_time", float),
+    "Symbolic time:": ("symbolic_time", float),
+    "CSR time:": ("csr_time", float),
+    "PredictLU time:": ("predictlu_time", float),
+    "Leveling time:": ("leveling_time", float),
+    "Symbolic preparation time (total):": ("symbolic_preparation_time", float),
+    "Numeric LU time (including GPU setup/transfers):": ("numeric_lu_time", float),
+    "Triangular solve time (CPU):": ("triangular_solve_time", float),
+    "Task 1 total solve time (T_gpu):": ("total_solve_ms", float),
+    "Ax-b (1-norm):": ("residual_l1", float),
+    "Ax-b (2-norm):": ("residual_l2", float),
+    "Ax-b (infinite-norm):": ("residual_linf", float),
+}
+FIELDS = [
+    "matrix", "update_strategy", "scheduling", "perturb", "status", "exit_code",
+    "n", "nnz", "preprocessing_time", "symbolic_time", "csr_time",
+    "predictlu_time", "leveling_time", "symbolic_preparation_time",
+    "numeric_lu_time", "triangular_solve_time", "total_solve_ms",
+    "residual_l1", "residual_l2", "residual_linf", "log_path", "solution_path", "note",
+]
+
+
+def parse_metrics(log_path):
+    metrics = {}
+    with log_path.open(encoding="utf-8", errors="replace") as log:
+        for line in log:
+            line = line.strip()
+            for label, (field, convert) in METRICS.items():
+                if line.startswith(label):
+                    try:
+                        metrics[field] = convert(line[len(label):].split()[0])
+                    except (ValueError, IndexError):
+                        pass
+    return metrics
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--matrix-dir", type=Path, default=SOURCE_DIR / "matrix",
+                        help="matrix directory, searched recursively for *.mtx")
+    parser.add_argument("--solver", type=Path, default=SOURCE_DIR / "lu_cmd")
+    parser.add_argument("--output-dir", type=Path,
+                        help="new output directory (must not already exist)")
+    parser.add_argument("--update-strategy", choices=["right-looking", "left-looking"],
+                        default="right-looking")
+    parser.add_argument("--scheduling", choices=["level", "synchronization-free"],
+                        default="level")
+    parser.add_argument("--perturb", action="store_true", help="pass -p to lu_cmd")
+    parser.add_argument("--timeout", type=float, default=0,
+                        help="maximum seconds per matrix; 0 disables timeout")
+    args = parser.parse_args()
+    if not math.isfinite(args.timeout) or args.timeout < 0:
+        parser.error("--timeout must be finite and nonnegative")
+    if args.scheduling == "synchronization-free" and args.update_strategy != "left-looking":
+        parser.error("synchronization-free requires --update-strategy left-looking")
+
+    solver = args.solver.resolve()
+    matrix_dir = args.matrix_dir.resolve()
+    if not solver.is_file() or not os.access(str(solver), os.X_OK):
+        parser.error("solver is not executable: {}; build with make -C src MAIN".format(solver))
+    if not matrix_dir.is_dir():
+        parser.error("matrix directory does not exist: {}".format(matrix_dir))
+    matrices = sorted(path for path in matrix_dir.rglob("*.mtx") if path.is_file())
+    if not matrices:
+        parser.error("no *.mtx files found in {}".format(matrix_dir))
+    output_dir = (args.output_dir or SOURCE_DIR / "batch_results" /
+                  datetime.now().strftime("%Y%m%d_%H%M%S_%f")).resolve()
+    try:
+        output_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        parser.error("cannot create fresh output directory: {}".format(exc))
+
+    env = os.environ.copy()
+    hpcc_path = env.get("HPCC_PATH", "/opt/hpcc")
+    env["HPCC_PATH"] = hpcc_path
+    env["LD_LIBRARY_PATH"] = str(Path(hpcc_path) / "lib") + (
+        ":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+    summary = output_dir / "summary.csv"
+    failed = 0
+    print("Matrices: {} | Results: {}".format(len(matrices), output_dir), flush=True)
+    with summary.open("w", newline="", encoding="utf-8-sig") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=FIELDS)
+        writer.writeheader()
+        csv_file.flush()
+        for index, matrix in enumerate(matrices, 1):
+            # Each process has its own cwd so lu_cmd's x.dat never gets overwritten.
+            run_dir = output_dir / "{:04d}_{}".format(index, matrix.stem)
+            run_dir.mkdir()
+            log_path = run_dir / "solver.log"
+            solution_path = run_dir / "x.dat"
+            command = [str(solver), "-i", str(matrix), "-u", args.update_strategy,
+                       "-s", args.scheduling]
+            if args.perturb:
+                command.append("-p")
+            row = dict(matrix=str(matrix.relative_to(matrix_dir)),
+                       update_strategy=args.update_strategy, scheduling=args.scheduling,
+                       perturb=int(args.perturb), status="ok", exit_code="",
+                       log_path=str(log_path.relative_to(output_dir)), solution_path="",
+                       note="")
+            print("[{}/{}] {}".format(index, len(matrices), row["matrix"]), flush=True)
+            with log_path.open("w", encoding="utf-8") as log:
+                try:
+                    result = subprocess.run(command, cwd=str(run_dir), env=env,
+                                            stdout=log, stderr=subprocess.STDOUT,
+                                            timeout=args.timeout or None)
+                    row["exit_code"] = result.returncode
+                    if result.returncode != 0:
+                        row.update(status="failed", note="solver returned a nonzero exit code")
+                except subprocess.TimeoutExpired:
+                    row.update(status="timeout", note="exceeded {} seconds".format(args.timeout))
+                except OSError as exc:
+                    row.update(status="failed", note=str(exc))
+                    log.write("\nBatch runner: {}\n".format(exc))
+
+            metrics = parse_metrics(log_path)
+            row.update(metrics)
+            missing = [field for field, _ in METRICS.values() if field not in metrics]
+            invalid = [field for field, value in metrics.items()
+                       if not math.isfinite(value) or value < 0 or (field == "n" and value == 0)]
+            if row["status"] == "ok":
+                if missing:
+                    row.update(status="missing_metrics", note="missing: " + ", ".join(missing))
+                elif invalid:
+                    row.update(status="invalid_metrics", note="invalid: " + ", ".join(invalid))
+            if solution_path.is_file():
+                row["solution_path"] = str(solution_path.relative_to(output_dir))
+            writer.writerow(row)
+            csv_file.flush()
+            failed += row["status"] != "ok"
+            print("  {} | total_solve_ms={} | residual_l2={}".format(
+                row["status"], row.get("total_solve_ms", ""), row.get("residual_l2", "")),
+                flush=True)
+
+    print("Finished: {} ok, {} failed. CSV: {}".format(
+        len(matrices) - failed, failed, summary), flush=True)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted; completed rows remain in summary.csv.", file=sys.stderr)
+        sys.exit(130)
