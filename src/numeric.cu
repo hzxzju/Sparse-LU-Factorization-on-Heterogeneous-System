@@ -694,6 +694,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         const unsigned ll_threads = maxWaveAlignedThreads < 256
             ? static_cast<unsigned>(maxWaveAlignedThreads) : 256u;
         out << "LL-SF workers: " << TMPMEMNUM << ", workspace bytes: " << tmp_bytes << endl;
+        out << "LL-SF kernel launch; waiting for completion..." << endl;
         LL_factorizeSyncFree<<<TMPMEMNUM, ll_threads>>>(sym_c_ptr_dev,
                                                       sym_r_idx_dev,
                                                       val_dev,
@@ -704,6 +705,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
                                                       n, PERTURB, pert);
         HC_RETURN_ON_ERR(hcGetLastError(), "LL-SF kernel launch");
         HC_RETURN_ON_ERR(hcDeviceSynchronize(), "LL-SF completion");
+        out << "LL-SF kernel completed." << endl;
     }
 
     for (unsigned i = 0; !sync_free && i < num_lev; ++i)

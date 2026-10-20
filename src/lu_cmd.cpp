@@ -6,8 +6,10 @@
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <limits>
 #include "symbolic.h"
 #include "numeric.h"
+#include "refinement.h"
 #include "Timer.h"
 #include "preprocess.h"
 #include "nicslu.h"
@@ -23,6 +25,10 @@ void help_message()
     cout << "-p to enable perturbation" << endl;
     cout << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
     cout << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
+    cout << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
+    cout << "--residual-tol T (default: 1e-6; absolute ||Ax-b||_2 target)" << endl;
+    cout << "--max-refine-iters N|n (default: n = matrix order; 0 disables corrections)" << endl;
+    cout << "--progress to flush stage diagnostics while running (for timeout diagnosis)" << endl;
 }
 
 int main(int argc, char** argv)
@@ -30,11 +36,16 @@ int main(int argc, char** argv)
     Timer t, total_timer, symbolic_timer;
     double preprocess_ms = 0., symbolic_ms = 0., csr_ms = 0.;
     double predict_ms = 0., leveling_ms = 0., symbolic_total_ms = 0.;
-    double numeric_ms = 0., solve_ms = 0., total_ms = 0.;
+    double numeric_ms = 0., solve_ms = 0., refinement_ms = 0., total_ms = 0.;
     SNicsLU *nicslu = nullptr;
 
     const char *matrixName = nullptr;
     bool PERTURB = false;
+    bool progress = false;
+    unsigned sf_workers = 0;
+    double residual_tolerance = 1e-6;
+    unsigned max_refine_iters = 0;
+    bool refine_limit_is_order = true;
     UpdateStrategy update_strategy = UpdateStrategy::RightLooking;
     SchedulingStrategy scheduling = SchedulingStrategy::Level;
 
@@ -60,6 +71,60 @@ int main(int argc, char** argv)
         else if (strcmp(argv[i], "-p") == 0) {
             PERTURB = true;
             i += 1;
+        }
+        else if (strcmp(argv[i], "--progress") == 0) {
+            progress = true;
+            i += 1;
+        }
+        else if (strcmp(argv[i], "--sf-workers") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            const std::string value(argv[i + 1]);
+            try {
+                if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos)
+                    throw std::invalid_argument("invalid worker count");
+                const unsigned long long parsed = std::stoull(value);
+                if (parsed > std::numeric_limits<unsigned>::max())
+                    throw std::out_of_range("worker count too large");
+                sf_workers = static_cast<unsigned>(parsed);
+            } catch (const std::exception &) {
+                cerr << "--sf-workers must be an unsigned integer (0 = automatic)." << endl;
+                return -1;
+            }
+            i += 2;
+        }
+        else if (strcmp(argv[i], "--residual-tol") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            try {
+                const std::string value(argv[i + 1]);
+                size_t consumed = 0;
+                residual_tolerance = std::stod(value, &consumed);
+                if (consumed != value.size() || !std::isfinite(residual_tolerance) ||
+                    residual_tolerance <= 0)
+                    throw std::invalid_argument("invalid residual tolerance");
+            } catch (const std::exception &) {
+                cerr << "--residual-tol must be finite and positive." << endl;
+                return -1;
+            }
+            i += 2;
+        }
+        else if (strcmp(argv[i], "--max-refine-iters") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            const std::string value(argv[i + 1]);
+            refine_limit_is_order = value == "n";
+            if (!refine_limit_is_order) {
+                try {
+                    if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos)
+                        throw std::invalid_argument("invalid refinement limit");
+                    const unsigned long long parsed = std::stoull(value);
+                    if (parsed > std::numeric_limits<unsigned>::max())
+                        throw std::out_of_range("refinement limit too large");
+                    max_refine_iters = static_cast<unsigned>(parsed);
+                } catch (const std::exception &) {
+                    cerr << "--max-refine-iters must be an unsigned integer or n." << endl;
+                    return -1;
+                }
+            }
+            i += 2;
         }
         else if (strcmp(argv[i], "-u") == 0 || strcmp(argv[i], "--update-strategy") == 0) {
             if (i + 1 >= argc) {
@@ -100,6 +165,8 @@ int main(int argc, char** argv)
 
     try {
         ValidateNumericConfiguration(update_strategy, scheduling);
+        if (sf_workers && scheduling != SchedulingStrategy::SynchronizationFree)
+            throw std::invalid_argument("--sf-workers requires synchronization-free scheduling");
     } catch (const std::invalid_argument &e) {
         cerr << e.what() << endl;
         return -1;
@@ -107,6 +174,11 @@ int main(int argc, char** argv)
 
     // Task 1 S2: T_gpu is the complete heterogeneous solve wall time,
     // including input preparation, CPU work, transfers and GPU synchronization.
+    auto report_stage = [&](const char *stage) {
+        if (progress)
+            cerr << "[stage] " << stage << endl;
+    };
+    report_stage("input/preprocessing started");
     total_timer.start();
     nicslu = static_cast<SNicsLU *>(malloc(sizeof(SNicsLU)));
     if (nicslu == nullptr) {
@@ -126,27 +198,34 @@ int main(int argc, char** argv)
     t.elapsedWallclockTime(preprocess_ms);
 
     n = nicslu->n;
+    if (refine_limit_is_order)
+        max_refine_iters = n;
 
-    // Buffer solver diagnostics so terminal output does not delay the solve.
+    // Keep benchmark diagnostics buffered unless live progress was requested.
     std::ostringstream solver_output;
+    ostream &diagnostics = progress ? cout : solver_output;
+    report_stage("symbolic fill-in started");
     symbolic_timer.start();
     t.start();
 
     // B's CSR arrays are also CSC arrays of B^T. Analyze and factor B^T;
     // solve_CSR below uses the transpose factors to solve the original system.
-    Symbolic_Matrix A_sym(n, solver_output, cerr);
+    Symbolic_Matrix A_sym(n, diagnostics, cerr);
     A_sym.fill_in(ai, ap);
     t.elapsedWallclockTime(symbolic_ms);
 
+    report_stage("CSR construction started");
     t.start();
     A_sym.csr();
     t.elapsedWallclockTime(csr_ms);
 
+    report_stage("numeric value preparation started");
     t.start();
     A_sym.predictLU(ai, ap, ax);
     t.elapsedWallclockTime(predict_ms);
 
     if (scheduling == SchedulingStrategy::Level) {
+        report_stage("level generation started");
         t.start();
         A_sym.leveling();
         t.elapsedWallclockTime(leveling_ms);
@@ -160,8 +239,9 @@ int main(int argc, char** argv)
 
     // Numeric factorization on GPU updates A_sym.val in place to LU factors.
     std::ostringstream numeric_errors;
+    report_stage("GPU numeric LU started");
     t.start();
-    LUonDevice(A_sym, solver_output, numeric_errors, PERTURB, update_strategy, scheduling);
+    LUonDevice(A_sym, diagnostics, numeric_errors, PERTURB, update_strategy, scheduling, sf_workers);
     t.elapsedWallclockTime(numeric_ms);
     if (!numeric_errors.str().empty()) {
         cout << solver_output.str();
@@ -179,12 +259,23 @@ int main(int argc, char** argv)
 
     // Solve Ax=b with the computed factors and NICSLU permutations/scales.
     vector<REAL> b(n, 1.);
+    report_stage("CPU triangular solve started");
     t.start();
     vector<REAL> x = A_sym.solve_CSR(nicslu, b);
     t.elapsedWallclockTime(solve_ms);
-    // Factors have been copied back by blocking hcMemcpy inside LUonDevice;
-    // solve_CSR is synchronous CPU work. The result is now available on host.
+    report_stage("residual check / iterative refinement started");
+    t.start();
+    diagnostics << std::setprecision(std::numeric_limits<REAL>::max_digits10)
+                << "Residual L2 tolerance: " << residual_tolerance << '\n'
+                << "Refinement max iterations: " << max_refine_iters << '\n';
+    const RefinementResult refinement = RefineCSR(n, ax_backup, ai_backup, ap_backup,
+        b, x, residual_tolerance, max_refine_iters,
+        [&](const vector<REAL> &rhs) { return A_sym.solve_CSR(nicslu, rhs); },
+        &diagnostics);
+    t.elapsedWallclockTime(refinement_ms);
+    // Include the initial residual check and every correction in T_gpu.
     total_timer.elapsedWallclockTime(total_ms);
+    report_stage("solve completed");
 
     cout << "Matrix Row: " << n << endl;
     cout << "Original nonzero: " << nicslu->nnz << endl;
@@ -199,36 +290,27 @@ int main(int argc, char** argv)
         << "Symbolic preparation time (total): " << symbolic_total_ms << " ms\n"
         << "Numeric LU time (including GPU setup/transfers): " << numeric_ms << " ms\n"
         << "Triangular solve time (CPU): " << solve_ms << " ms\n"
+        << "Iterative refinement time (CPU): " << refinement_ms << " ms\n"
         << "Task 1 total solve time (T_gpu): " << total_ms << " ms\n";
     cout << timing_output.str();
 
-    // Output serialization and residual verification are outside T_gpu.
+    cout << "Refinement iterations: " << refinement.iterations << '\n'
+         << "Refinement status: " << refinement.status << '\n';
+
+    // Serialization and reporting are outside T_gpu; residual evaluation is inside.
     {
         ofstream x_f("x.dat");
-        x_f << std::fixed << std::setprecision(10);
+        x_f << std::scientific << std::setprecision(std::numeric_limits<REAL>::max_digits10);
         for (REAL xx: x)
             x_f << xx << '\n';
     }
 
-    // Residual verification: compute ||Ax - b|| using the original matrix
-    {
-        REAL n1 = 0., n2 = 0., ni = 0.;
-        for (unsigned i = 0; i < n; ++i) {
-            REAL sum = 0.;
-            unsigned end = ap_backup[i + 1];
-            for (unsigned j = ap_backup[i]; j < end; ++j) {
-                sum += (REAL)ax_backup[j] * x[ai_backup[j]];
-            }
-            REAL tmp = sum - b[i];
-            if (tmp < 0.) tmp = -tmp;
-            n1 += tmp;
-            n2 += tmp * tmp;
-            if (tmp > ni) ni = tmp;
-        }
-        cout << "Ax-b (1-norm): " << n1 << endl;
-        cout << "Ax-b (2-norm): " << sqrt(n2) << endl;
-        cout << "Ax-b (infinite-norm): " << ni << endl;
-    }
+    cout << std::setprecision(std::numeric_limits<REAL>::max_digits10)
+         << "Ax-b (1-norm): " << refinement.residual.l1 << '\n'
+         << "Ax-b (2-norm): " << refinement.residual.l2 << '\n'
+         << "Ax-b (infinite-norm): " << refinement.residual.linf << endl;
+    if (!refinement.converged)
+        cerr << "Residual L2 target not reached (" << refinement.status << ")." << endl;
 
     NicsLU_Destroy(nicslu);
     free(nicslu);
@@ -239,5 +321,5 @@ int main(int argc, char** argv)
     free(ai_backup);
     free(ap_backup);
 
-    return 0;
+    return refinement.converged ? 0 : 2;
 }

@@ -93,12 +93,62 @@ starts at two workers per multiprocessor, bounded by the matrix size, grid limit
 and a workspace budget of min(256 MiB, total device memory / 16), with allocation
 fallback down to one worker. This is a tuning heuristic, not an occupancy claim.
 
-Ordered atomics are isolated in `src/sf_sync.cuh`. Production requires the
-HTHPCC Clang compiler to lower lock-free unsigned `__atomic_*` builtins with
-acquire/release semantics for device global memory. The supplied runtime guide
-does not establish that support. Run `tests/sf_sync.cu` on the target SDK before
-accepting this backend; CUDA compatibility tests validate a separate test-only
-device-scope acquire/release adapter, not HTHPCC compilation or performance.
+Ordered atomics are isolated in `src/sf_sync.cuh`. Production uses the SDK
+`__hpcc_atomic_*` builtins with explicit `memory_scope_device` and acquire/release
+publication. The compiler must provide these builtins; no relaxed fallback is
+used. Run `tests/sf_sync.cu` on the target GPU to validate progress and visibility;
+CUDA compatibility tests exercise a separate test-only adapter. For timeout
+diagnosis, use CLI/batch `--progress` and compare automatic workers against
+`--sf-workers 1`; see [src/RUN_BATCH.md](src/RUN_BATCH.md).
+
+## Batch stage timings
+
+Rebuild the native solver and run the batch script from the repository root:
+
+```sh
+make -C src MAIN
+python3 src/run_batch.py --update-strategy left-looking \
+  --scheduling synchronization-free --timeout 600
+```
+
+The solver records stage timings without per-kernel profiling. Batch runs write
+`summary.csv`, per-matrix logs and solution files; see
+[src/RUN_BATCH.md](src/RUN_BATCH.md) for timing definitions and options.
+
+## CLI residual target and iterative refinement
+
+`lu_cmd` and `src/run_batch.py` automatically check the absolute residual
+`||Ax-b||_2 <= 1e-6` after the initial solve. If needed, they reuse the existing
+LU factors for correction solves: `r=b-Ax`, `delta_x=solve_CSR(r)`,
+`x += delta_x`. Residuals use the original CSR matrix and CPU `long double`
+accumulation (extra precision depends on the platform); factors and solves
+remain double precision.
+
+```sh
+make -C src MAIN
+./src/lu_cmd -i src/matrix/ASIC_680ks_csr.mtx --residual-tol 1e-6 --max-refine-iters 10
+python3 src/run_batch.py --residual-tol 1e-6 --max-refine-iters 10
+```
+
+`--residual-tol` defaults to `1e-6` (finite and positive).
+`--max-refine-iters` defaults to `n`, the matrix order; use an unsigned integer
+for a fixed cap or `0` to check without correcting. No correction solve runs
+when the initial result already meets the target. Refinement stops on success,
+the iteration limit, a residual that fails to decrease, or nonfinite arithmetic.
+Rejected updates leave the best solution intact. The solver still writes that
+solution to `x.dat`, returning 0 on convergence or 2 if the target is missed.
+The target is an absolute residual, not relative solution error.
+
+Residual checks and refinement are included in total solve time. Logs include
+initial/per-iteration residuals, the limit, attempted iteration count, final
+status and a separate refinement time; `triangular_solve_time` covers the initial
+solve only. Batch CSV retains 23 columns, records a missed target as
+`residual_not_converged`, and continues. Residuals and solution files retain at
+least 17 significant digits. The additional cost is CPU work and O(n) temporary
+memory, without repeating GPU factorization. Automatic refinement applies to
+the CLI/batch path; the Python `pyglu` API retains its existing behavior.
+See [BUILD_AND_RUN.md](BUILD_AND_RUN.md) and
+[src/RUN_BATCH.md](src/RUN_BATCH.md) for timing and stopping details.
 
 ## Publications: 
 J1.  K. He, S. X.-D. Tan, H. Wang and G. Shi, “GPU-Accelerated Parallel Sparse LU Factorization Method for Fast Circuit Analysis”, IEEE Transactions on Very Large Scale Integrated Systems  (TVLSI), vol. 24, no.3, pp.1140-1150, March 2016.

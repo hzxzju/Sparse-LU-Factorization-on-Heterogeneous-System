@@ -63,9 +63,30 @@ def main():
     parser.add_argument("--scheduling", choices=["level", "synchronization-free"],
                         default="level")
     parser.add_argument("--perturb", action="store_true", help="pass -p to lu_cmd")
+    parser.add_argument("--sf-workers", type=int, default=0,
+                        help="SF workers; 0 selects automatically, 1 helps diagnose inter-worker waits")
+    parser.add_argument("--progress", action="store_true",
+                        help="flush solver stage diagnostics to solver.log while running")
+    parser.add_argument("--residual-tol", type=float, default=1e-6,
+                        help="absolute ||Ax-b||_2 target (default: 1e-6)")
+    parser.add_argument("--max-refine-iters", default="n",
+                        help="maximum correction solves; n = matrix order (default), 0 disables corrections")
     parser.add_argument("--timeout", type=float, default=0,
                         help="maximum seconds per matrix; 0 disables timeout")
     args = parser.parse_args()
+    if not math.isfinite(args.residual_tol) or args.residual_tol <= 0:
+        parser.error("--residual-tol must be finite and positive")
+    if args.max_refine_iters != "n":
+        value = args.max_refine_iters
+        if not value or any(ch not in "0123456789" for ch in value) or len(value.lstrip("0")) > 10:
+            parser.error("--max-refine-iters must be an unsigned integer or n")
+        args.max_refine_iters = int(value.lstrip("0") or "0")
+        if args.max_refine_iters > 4294967295:
+            parser.error("--max-refine-iters must not exceed 4294967295")
+    if not 0 <= args.sf_workers <= 4294967295:
+        parser.error("--sf-workers must be between 0 and 4294967295")
+    if args.sf_workers and args.scheduling != "synchronization-free":
+        parser.error("--sf-workers requires --scheduling synchronization-free")
     if not math.isfinite(args.timeout) or args.timeout < 0:
         parser.error("--timeout must be finite and nonnegative")
     if args.scheduling == "synchronization-free" and args.update_strategy != "left-looking":
@@ -106,9 +127,14 @@ def main():
             log_path = run_dir / "solver.log"
             solution_path = run_dir / "x.dat"
             command = [str(solver), "-i", str(matrix), "-u", args.update_strategy,
-                       "-s", args.scheduling]
+                       "-s", args.scheduling, "--residual-tol", str(args.residual_tol),
+                       "--max-refine-iters", str(args.max_refine_iters)]
             if args.perturb:
                 command.append("-p")
+            if args.sf_workers:
+                command.extend(["--sf-workers", str(args.sf_workers)])
+            if args.progress:
+                command.append("--progress")
             row = dict(matrix=str(matrix.relative_to(matrix_dir)),
                        update_strategy=args.update_strategy, scheduling=args.scheduling,
                        perturb=int(args.perturb), status="ok", exit_code="",
@@ -122,7 +148,11 @@ def main():
                                             timeout=args.timeout or None)
                     row["exit_code"] = result.returncode
                     if result.returncode != 0:
-                        row.update(status="failed", note="solver returned a nonzero exit code")
+                        if result.returncode == 2:
+                            row.update(status="residual_not_converged",
+                                       note="solver did not reach the residual L2 target")
+                        else:
+                            row.update(status="failed", note="solver returned a nonzero exit code")
                 except subprocess.TimeoutExpired:
                     row.update(status="timeout", note="exceeded {} seconds".format(args.timeout))
                 except OSError as exc:
@@ -139,13 +169,16 @@ def main():
                     row.update(status="missing_metrics", note="missing: " + ", ".join(missing))
                 elif invalid:
                     row.update(status="invalid_metrics", note="invalid: " + ", ".join(invalid))
+                elif metrics["residual_l2"] > args.residual_tol:
+                    row.update(status="residual_not_converged",
+                               note="residual L2 exceeds {}".format(args.residual_tol))
             if solution_path.is_file():
                 row["solution_path"] = str(solution_path.relative_to(output_dir))
             writer.writerow(row)
             csv_file.flush()
             failed += row["status"] != "ok"
-            print("  {} | total_solve_ms={} | residual_l2={}".format(
-                row["status"], row.get("total_solve_ms", ""), row.get("residual_l2", "")),
+            print("  {} | total_solve_ms={}".format(
+                row["status"], row.get("total_solve_ms", "")),
                 flush=True)
 
     print("Finished: {} ok, {} failed. CSV: {}".format(

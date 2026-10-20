@@ -1,5 +1,46 @@
 # Numeric strategy regression checks
 
+The batch runner has a host-only regression using a subprocess solver fixture.
+It checks stage timing and residual output, strategy/refinement option forwarding,
+residual target failures and timeout handling, and the summary/log/solution files without requiring a GPU:
+
+```sh
+python3 -m unittest discover -s tests -p test_run_batch.py -v
+```
+
+The host-only refinement checks cover skipping an already accurate solution,
+repeated corrections using inexact factors, absolute residual targets, iteration
+caps (including zero), stagnation, rejecting worsening/nonfinite updates,
+and extended-precision residual cancellation. Use a C++11 compiler (on the
+HTHPCC host, the installed compiler is `$HOME/local/gcc-7.3.0/usr/bin/g++`):
+
+```sh
+"${CXX:-$HOME/local/gcc-7.3.0/usr/bin/g++}" -O2 -Wall -Wextra -std=c++11 -Iinclude tests/refinement.cpp -o /tmp/glu-refinement-test
+/tmp/glu-refinement-test
+```
+
+For a target-GPU integration check on the two problematic matrices, build and
+run each solver invocation from a separate output directory (each writes
+`x.dat`). With default arguments, the CLI targets absolute residualL2 <= 1e-6
+and uses the matrix order as the correction cap:
+
+```sh
+make -C src MAIN
+GLU_TEST_ROOT="$PWD"
+GLU_TEST_RESULTS=$(mktemp -d /tmp/glu-refinement-check.XXXXXX)
+mkdir "$GLU_TEST_RESULTS/asic" "$GLU_TEST_RESULTS/twotone"
+(cd "$GLU_TEST_RESULTS/asic" && "$GLU_TEST_ROOT/src/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/ASIC_680ks_csr.mtx")
+(cd "$GLU_TEST_RESULTS/twotone" && "$GLU_TEST_ROOT/src/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/twotone_csr.mtx")
+```
+
+Inspect `Refinement iterations`, `Refinement status`, final `Ax-b (2-norm)`
+and the exit code: 0 means convergence, 2 means a missed target with the best
+solution retained. `--max-refine-iters 0` provides an initial-solve comparison;
+`--max-refine-iters 1` checks the single-correction cap. The refinement time
+includes the initial residual check and all correction work, and is included in
+`T_gpu`. A stagnating or nonfinite candidate is rejected and stops refinement.
+See [../src/RUN_BATCH.md](../src/RUN_BATCH.md) for all options and CSV status rules.
+
 From the repository root, test the native Matrix Market reader (requires GCC
 and Python, no GPU). This covers arbitrary triplet order, empty rows, invalid
 coordinates, and the bundled column-ordered `ASIC_100k.mtx`:
@@ -18,24 +59,28 @@ On the HTHPCC machine, compile the actual numeric and symbolic sources with the
 GPU regression driver:
 
 First compile and run the ordered-atomic publication test. This also probes
-whether the target Clang/LLVM device compiler supports the production
-`__atomic_*` adapter; the runtime guide alone does not establish that support.
+whether the target SDK and GPU implement the production device-scope
+`__hpcc_atomic_*` publication protocol correctly. Compilation alone cannot
+validate cross-worker visibility or progress.
 
 ```sh
-"$HPCC_PATH/htgpu_llvm/bin/htcc" -O2 -std=c++11 -x hpcc -Isrc tests/sf_sync.cu -o /tmp/glu-sf-sync-test
-/tmp/glu-sf-sync-test
+"$HPCC_PATH/htgpu_llvm/bin/htcc" -O2 -std=c++11 -x hpcc -D__sync_threads=__syncthreads -Isrc tests/sf_sync.cu -o /tmp/glu-sf-sync-test
+timeout 60s /tmp/glu-sf-sync-test
 ```
 
 It tests all-lane publication/consumption through the production SF helpers,
 monotone issuance with 1/2/8/128/1024 workers, and four resets with different
-data per worker count. The 257-task chain includes more workers than tasks.
+data per worker count. The 257-task chain includes more workers than tasks. Each launch prints and
+flushes its worker count and repeat number before starting, so a timeout shows
+which configuration stalled. All five worker counts must pass; a pass with only
+one worker does not validate inter-block publication.
 
 Then run the numeric driver:
 
 ```sh
 g++ -O2 -std=c++11 -Iinclude -Isrc/nicslu/include -c src/symbolic.cc -o /tmp/glu-symbolic-test.o
 g++ -O2 -std=c++11 -Iinclude -c src/Timer.cpp -o /tmp/glu-timer-test.o
-"$HPCC_PATH/htgpu_llvm/bin/htcc" -O2 -std=c++11 -x hpcc -Iinclude -Isrc/nicslu/include -c src/numeric.cu -o /tmp/glu-numeric-test.o
+"$HPCC_PATH/htgpu_llvm/bin/htcc" -O2 -std=c++11 -x hpcc -D__sync_threads=__syncthreads -Iinclude -Isrc/nicslu/include -c src/numeric.cu -o /tmp/glu-numeric-test.o
 g++ -O2 -std=c++11 -Iinclude -Isrc/nicslu/include -c tests/numeric_strategies.cpp -o /tmp/glu-strategies-test.o
 "$HPCC_PATH/htgpu_llvm/bin/htcc" /tmp/glu-symbolic-test.o /tmp/glu-numeric-test.o /tmp/glu-strategies-test.o /tmp/glu-timer-test.o -o /tmp/glu-strategies-test
 /tmp/glu-strategies-test

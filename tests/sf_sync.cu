@@ -32,7 +32,11 @@ int main()
     double *values = nullptr;
     unsigned *next = nullptr, *done = nullptr;
     auto cleanup = [&]() { hcFree(values); hcFree(next); hcFree(done); };
-    auto check = [](hcError_t status) { return status == hcSuccess; };
+    auto check = [](hcError_t status) {
+        if (status != hcSuccess)
+            std::fprintf(stderr, "HTHPCC runtime error: %d\n", static_cast<int>(status));
+        return status == hcSuccess;
+    };
     if (!check(hcMalloc((void **)&values, tasks * lanes * sizeof(double))) ||
         !check(hcMalloc((void **)&next, sizeof(unsigned))) ||
         !check(hcMalloc((void **)&done, tasks * sizeof(unsigned)))) {
@@ -43,6 +47,8 @@ int main()
     std::vector<unsigned> flags(tasks);
     for (unsigned workers : {1u, 2u, 8u, 128u, 1024u}) {
         for (unsigned repeat = 0; repeat < 4; ++repeat) {
+            std::printf("RUN publication workers=%u repeat=%u\n", workers, repeat);
+            std::fflush(stdout);
             const unsigned seed = 1000 * repeat;
             if (!check(hcMemset(next, 0, sizeof(unsigned))) ||
                 !check(hcMemset(done, 0, tasks * sizeof(unsigned)))) {

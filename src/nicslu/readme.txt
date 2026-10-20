@@ -36,3 +36,12 @@ Read the following contents to quickly get how to compile and test NICSLU. The p
 
 NOTE: when using gcc, the optimization flag can be -O2, but CANNOT be -O3.
 If you want to get more details, refer to the user guide.
+
+GLU integration note (2026-10-20)
+The parent project's lu_cmd and run_batch.py perform their own iterative
+refinement using the GPU-generated factors and Symbolic_Matrix::solve_CSR.
+Their default absolute residual L2 target is 1e-6; --max-refine-iters defaults
+to n (matrix order), accepts a fixed unsigned limit, or 0 to disable corrections.
+--residual-tol changes the target. This does not change the standalone NICSLU
+demos or NicsLU_Refine API; NicsLU_Refine cannot directly consume GLU factors.
+See ../RUN_BATCH.md and the repository BUILD_AND_RUN.md for stopping, exit status and timing rules.

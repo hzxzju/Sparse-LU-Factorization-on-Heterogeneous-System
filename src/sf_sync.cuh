@@ -4,19 +4,19 @@
 #include <hc_runtime.h>
 
 // All state lives in device global memory and is naturally unsigned-aligned.
-// The production path requires Clang/LLVM lock-free ordered atomics. Do not
-// substitute volatile or relaxed legacy atomicAdd for release/acquire.
-// HTHPCC lowering and visibility must be checked using tests/sf_sync.cu on
-// the target SDK; the supplied runtime guide does not specify this interface.
+// Use the SDK's ordered device-scope atomics, as its native atomicAdd does.
+// Generic __atomic_* emits system-scope IR on this SDK. Do not substitute
+// volatile or relaxed legacy atomicAdd for release/acquire publication.
+// Validate device progress and visibility using tests/sf_sync.cu on the GPU.
 #if defined(GLU_TEST_CUDA_COMPAT)
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 700
 #error "The test-only CUDA LL-SF ordered-atomic adapter requires sm_70 or newer"
 #endif
 #elif !defined(__clang__)
 #error "LL-SF requires an HTHPCC Clang compiler with ordered device atomics"
-#else
-static_assert(__atomic_always_lock_free(sizeof(unsigned), nullptr),
-              "LL-SF requires lock-free unsigned device atomics");
+#elif !__has_builtin(__hpcc_atomic_fetch_add) || \
+      !__has_builtin(__hpcc_atomic_load) || !__has_builtin(__hpcc_atomic_store)
+#error "LL-SF requires HTHPCC ordered device-scope atomic builtins"
 #endif
 
 namespace glu_sf {
@@ -26,7 +26,7 @@ __device__ inline unsigned fetch_next_column(unsigned *next_col)
 #if defined(GLU_TEST_CUDA_COMPAT)
     return atomicAdd(next_col, 1u);
 #else
-    return __atomic_fetch_add(next_col, 1u, __ATOMIC_RELAXED);
+    return __hpcc_atomic_fetch_add(next_col, 1u, __ATOMIC_RELAXED, memory_scope_device);
 #endif
 }
 
@@ -39,7 +39,7 @@ __device__ inline unsigned load_done_acquire(unsigned *done)
                  : "=r"(value) : "l"(done) : "memory");
     return value;
 #else
-    return __atomic_load_n(done, __ATOMIC_ACQUIRE);
+    return __hpcc_atomic_load(done, __ATOMIC_ACQUIRE, memory_scope_device);
 #endif
 }
 
@@ -49,7 +49,7 @@ __device__ inline void store_done_release(unsigned *done)
     asm volatile("st.release.gpu.global.u32 [%0], %1;"
                  : : "l"(done), "r"(1u) : "memory");
 #else
-    __atomic_store_n(done, 1u, __ATOMIC_RELEASE);
+    __hpcc_atomic_store(done, 1u, __ATOMIC_RELEASE, memory_scope_device);
 #endif
 }
 
