@@ -2,6 +2,7 @@
 #include "Timer.h"
 #include <iostream>
 #include "numeric.h"
+#include "gpu_device.h"
 #include "left_looking.cuh"
 #include "left_looking_sf.cuh"
 #include <cmath>
@@ -419,22 +420,16 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         }
     }
 
-    int deviceCount = 0;
-    if (!hcCheck(hcGetDeviceCount(&deviceCount), "hcGetDeviceCount"))
-        return;
-    if (deviceCount <= 0) {
-        err << "No HTHPCC GPU detected." << endl;
-        return;
-    }
-
-    int dev = 0;
+    int dev = -1;
     hcDeviceProp_t deviceProp;
-    if (!hcCheck(hcGetDeviceProperties(&deviceProp, dev), "hcGetDeviceProperties"))
-        return;
-    if (deviceProp.waveSize != 64) {
-        err << "Expected HTHPCC waveSize 64, got " << deviceProp.waveSize << endl;
+    try {
+        dev = glu_gpu::SelectDevice(A_sym.gpu_device, glu_gpu::DeviceRequirements(),
+                                   deviceProp, out);
+    } catch (const std::runtime_error &e) {
+        err << e.what() << endl;
         return;
     }
+    A_sym.gpu_device = dev;
     // Keep all blocks wave-aligned and within the selected device's limit.
     const int maxWaveAlignedThreads = (deviceProp.maxThreadsPerBlock / 64) * 64;
     if (maxWaveAlignedThreads < 64) {
@@ -443,8 +438,6 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     }
     const int onecolBlockThreads = (maxWaveAlignedThreads < 1024)
         ? maxWaveAlignedThreads : 1024;
-    if (!hcCheck(hcSetDevice(dev), "hcSetDevice"))
-        return;
     out << "Device " << dev << ": " << deviceProp.name << " has been selected." << endl;
     out << "Numeric update strategy: " << UpdateStrategyName(update_strategy) << endl;
     out << "Numeric scheduling: " << SchedulingStrategyName(scheduling) << endl;

@@ -1,5 +1,68 @@
 # Numeric strategy regression checks
 
+Symbolic and Numeric now use a shared GPU selector: initialization errors on one
+enumerated device are logged and skipped, and Numeric prefers the device selected
+by Symbolic. Test its failure handling without a GPU:
+
+```sh
+make -C src test-gpu-device-selection DEBUG=0
+make -C src gpu_device_probe DEBUG=0
+timeout 15s ./src/gpu_device_probe --count
+timeout 15s ./src/gpu_device_probe
+```
+
+Enumeration must succeed before per-device fallback can run. If the SDK itself
+blocks in `hcGetDeviceCount`, changing `hcSetDevice` cannot skip that earlier
+step. See [the initialization diagnosis](../docs/GPU_Device_Initialization_Diagnostics.md)
+for the observed GPU 2 queue stall and the separate missing-device-node issue in
+the restricted execution environment. The probe prints its current step before
+calling the runtime; timeout exit 124 means the call did not return.
+
+GPU symbolic Phase 1 has a separate target using the real HTHPCC toolchain:
+
+```sh
+make -C src symbolic_gpu_test DEBUG=0 -j2
+make -C src test-symbolic-host DEBUG=0
+timeout 300s ./src/symbolic_gpu_test
+```
+
+The minimal target links only CPU symbolic, GPU symbolic and the test driver;
+it does not compile numeric kernels or preprocessing libraries. The default test
+requires GPU execution with fallback disabled: exit 0 means the elementwise
+checks passed, 1 means failure, and 77 means no accessible GPU (SKIP, not a pass).
+`--host-only` runs 66,066 exhaustive host checks of the graph path criterion,
+CPU dependency/ordering checks, input validation and reuse checks. It does not
+validate GPU concurrency. GPU cases compare all three CSC arrays, test
+64/128/256-thread CTAs, 1/3/128 workspace slots, epoch re-enqueue, and recursive
+scan boundaries; subsequent CSR/value/level comparisons still use CPU methods.
+The optional `symbolic_gpu_numeric_test` target adds existing numeric integration
+checks. See [the semantic audit and Phase 1 instructions](../docs/GPU_Symbolic_Factorization_Design.md#phase-1-原型构建与验收).
+
+GPU symbolic SF is a separate opt-in backend (`--symbolic-backend gpu-sf`).
+It reuses the CPU golden, packing scan and downstream numeric consumers. Run:
+
+```sh
+make -C src test-symbolic-sf-host DEBUG=0
+make -C src test-symbolic-sf-gpu DEBUG=0
+timeout -k 3s 600s ./src/symbolic_gpu_test --sf --stress
+timeout -k 3s 600s ./src/symbolic_gpu_numeric_test --sf
+python3 -m unittest discover -s tests -p test_symbolic_benchmark.py -v
+```
+
+The SF host target calls production scheduler/bitmap/checkpoint/waiter helpers
+with host acquire/release atomics: 1,000 randomized executions, reversed task
+issuance, many waiters, exact predecessor read counts, sparse arenas, guarded
+bounds, and queue/ticket errors. Additional 64/128/256-lane host barrier tests
+cover cooperative bitmap export and scans. These simulations do not prove GPU
+device scope or native wave semantics. The real GPU target disables fallback
+and tests 64/128/256-thread blocks, dynamic predecessors, structured/random
+patterns, pool restarts, strict failure, reuse, and oversubscribed worker grids.
+The numeric target compares factors and verifies ordinary and transpose solves.
+The stress option adds 1,000 inputs with two worker configurations each.
+See [RUN_BATCH.md](../src/RUN_BATCH.md#gpu-符号分析-sf2026-10-26) for the
+protocol, memory/timing definitions, benchmark commands and actual acceptance
+status; GPU exit 77 is a skip, never a pass.
+
 The batch runner has a host-only regression using a subprocess solver fixture.
 It checks stage timing and residual output, strategy/refinement option forwarding,
 residual target failures and timeout handling, and the summary/log/solution files without requiring a GPU:
@@ -49,11 +112,33 @@ coordinates, and the bundled column-ordered `ASIC_100k.mtx`:
 python3 -m unittest discover -s tests -p test_matrix_reader.py -v
 ```
 
-From `PublicCase/GLU_public`, run the public Python parameter checks:
+From the repository root, run the public Python parameter and build recipe checks:
 
 ```sh
 python -m unittest discover -s tests -p test_python_parameters.py -v
+python -m unittest discover -s tests -p test_extension_build.py -v
 ```
+
+The forwarding checks mock the native factorization; if NumPy is absent they
+also mock the two array conversion calls. They verify option/default forwarding
+and keyword-only compatibility, not NumPy dtype/ABI or native compilation. The
+build recipe check mocks subprocesses and verifies that symbolic and numeric
+GPU objects use the same SDK flags and are both linked into the extension.
+
+Native Python checks require Python >=3.9, NumPy, pybind11 and a built extension:
+
+```sh
+python -m pip install -e . --no-build-isolation
+python -m unittest discover -s tests -p test_native_symbolic.py -v
+GLU_TEST_GPU=1 python -m unittest discover -s tests -p test_native_symbolic.py -v
+```
+
+Without `GLU_TEST_GPU=1`, only parameter/CSC rejection tests run; they reject
+before preprocessing or device initialization. Hardware tests cover all three
+symbolic backends, repeated solves and persistent diagnostics, strict pool
+failure cleanup, and reporting the actual CPU backend after fallback. Missing
+dependencies are explicit skips. Once hardware execution is enabled, a runtime
+failure is a test failure, not a skip.
 
 On the HTHPCC machine, compile the actual numeric and symbolic sources with the
 GPU regression driver:

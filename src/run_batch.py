@@ -29,7 +29,7 @@ METRICS = {
     "Ax-b (infinite-norm):": ("residual_linf", float),
 }
 FIELDS = [
-    "matrix", "update_strategy", "scheduling", "perturb", "status", "exit_code",
+    "matrix", "update_strategy", "scheduling", "perturb", "symbolic_backend", "status", "exit_code",
     "n", "nnz", "preprocessing_time", "symbolic_time", "csr_time",
     "predictlu_time", "leveling_time", "symbolic_preparation_time",
     "numeric_lu_time", "triangular_solve_time", "total_solve_ms",
@@ -73,7 +73,30 @@ def main():
                         help="maximum correction solves; n = matrix order (default), 0 disables corrections")
     parser.add_argument("--timeout", type=float, default=0,
                         help="maximum seconds per matrix; 0 disables timeout")
+    parser.add_argument("--symbolic-backend", choices=["cpu", "gpu", "gpu-sf"], default="cpu",
+                        help="symbolic factorization backend (default: cpu)")
+    parser.add_argument("--symbolic-sf-workers", type=int, default=0,
+                        help="symbolic SF workers, independent of numeric --sf-workers")
+    parser.add_argument("--symbolic-batch-cols", type=int, default=128,
+                        help="positive graph GPU workspace slot limit (default: 128)")
+    parser.add_argument("--symbolic-pool-entries", type=int, default=0)
+    parser.add_argument("--symbolic-max-pool-entries", type=int, default=0)
+    parser.add_argument("--symbolic-block-size", type=int, choices=[64, 128, 256], default=256)
+    parser.add_argument("--symbolic-verify", action="store_true")
+    parser.add_argument("--symbolic-no-fallback", action="store_true")
     args = parser.parse_args()
+    if not 1 <= args.symbolic_batch_cols <= 4294967295:
+        parser.error("--symbolic-batch-cols must be between 1 and 4294967295")
+    for name in ("symbolic_sf_workers", "symbolic_pool_entries", "symbolic_max_pool_entries"):
+        if not 0 <= getattr(args, name) <= 4294967295:
+            parser.error("--{} must be between 0 and 4294967295".format(name.replace("_", "-")))
+    if args.symbolic_backend != "gpu-sf" and any((args.symbolic_sf_workers,
+            args.symbolic_pool_entries, args.symbolic_max_pool_entries)):
+        parser.error("symbolic workers/pool options require --symbolic-backend gpu-sf")
+    if args.symbolic_max_pool_entries and args.symbolic_pool_entries > args.symbolic_max_pool_entries:
+        parser.error("initial symbolic pool exceeds maximum pool entries")
+    if args.symbolic_backend == "cpu" and (args.symbolic_verify or args.symbolic_no_fallback):
+        parser.error("symbolic verification/no-fallback requires a GPU backend")
     if not math.isfinite(args.residual_tol) or args.residual_tol <= 0:
         parser.error("--residual-tol must be finite and positive")
     if args.max_refine_iters != "n":
@@ -128,7 +151,18 @@ def main():
             solution_path = run_dir / "x.dat"
             command = [str(solver), "-i", str(matrix), "-u", args.update_strategy,
                        "-s", args.scheduling, "--residual-tol", str(args.residual_tol),
-                       "--max-refine-iters", str(args.max_refine_iters)]
+                       "--max-refine-iters", str(args.max_refine_iters), "--symbolic-backend", args.symbolic_backend]
+            for name in ("symbolic_sf_workers", "symbolic_pool_entries", "symbolic_max_pool_entries"):
+                if getattr(args, name):
+                    command.extend(["--" + name.replace("_", "-"), str(getattr(args, name))])
+            if args.symbolic_block_size != 256:
+                command.extend(["--symbolic-block-size", str(args.symbolic_block_size)])
+            if args.symbolic_batch_cols != 128:
+                command.extend(["--symbolic-batch-cols", str(args.symbolic_batch_cols)])
+            if args.symbolic_verify:
+                command.append("--symbolic-verify")
+            if args.symbolic_no_fallback:
+                command.append("--symbolic-no-fallback")
             if args.perturb:
                 command.append("-p")
             if args.sf_workers:
@@ -137,6 +171,7 @@ def main():
                 command.append("--progress")
             row = dict(matrix=str(matrix.relative_to(matrix_dir)),
                        update_strategy=args.update_strategy, scheduling=args.scheduling,
+                       symbolic_backend=args.symbolic_backend,
                        perturb=int(args.perturb), status="ok", exit_code="",
                        log_path=str(log_path.relative_to(output_dir)), solution_path="",
                        note="")

@@ -33,9 +33,11 @@ inline hcError_t hcGetDeviceProperties(hcDeviceProp_t *props, int device)
 #define hcMemcpyHostToDevice cudaMemcpyHostToDevice
 #define hcMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define hcMemset cudaMemset
+#define hcMemGetInfo cudaMemGetInfo
 #define hcStreamCreate cudaStreamCreate
 #define hcStreamDestroy cudaStreamDestroy
 #define hcDeviceSynchronize cudaDeviceSynchronize
 #define hcGetLastError cudaGetLastError
+#define hcGetErrorString cudaGetErrorString
 
 #endif

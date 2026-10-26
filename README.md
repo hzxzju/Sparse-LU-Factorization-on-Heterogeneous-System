@@ -70,19 +70,40 @@ lu = pyglu.splu(A, update_strategy="left-looking",
                scheduling="synchronization-free")
 x = lu.solve(b)
 print(lu.scheduling)  # synchronization-free
+
+# Opt in to GPU symbolic SF independently of the numeric strategy
+lu = pyglu.splu(A, update_strategy="left-looking", scheduling="synchronization-free",
+               sf_workers=1, symbolic_backend="gpu-sf", symbolic_sf_workers=2,
+               symbolic_verify=True, symbolic_no_fallback=True)
+x = lu.solve(b)
+print(lu.symbolic_backend)  # actual backend; cpu if fallback was enabled and used
+print(lu.diagnostics)      # symbolic timing, pools, parks, merges and numeric diagnostics
 ```
 
 `splu` accepts any scipy sparse matrix (any format) or a raw `(data, indices, indptr, shape)` tuple in CSC format. GLU's `REAL` type is `double`; the Python interface accepts and returns float64 arrays.
 
 `update_strategy` defaults to `"right-looking"`; `"left-looking"` selects the
 column-owned kernel in `src/left_looking.cuh`. The aliases `"right"`/`"rl"` and
-`"left"`/`"ll"` are accepted. Both strategies use CPU symbolic fill-in prediction
-and the same diagonal perturbation rule. `scheduling="level"` remains the default;
+`"left"`/`"ll"` are accepted. Both strategies default to CPU symbolic fill-in prediction
+and use the same diagonal perturbation rule. `scheduling="level"` remains the default;
 `scheduling="synchronization-free"` is supported only with left-looking updates.
 Left-looking collects
 previous L-column contributions into the current column before dividing by its
 pivot; it does not broadcast updates into future columns. Rebuild the extension
-after changing the native code.
+after changing the native code. `symbolic_backend="gpu"` selects the existing
+graph search backend; `"gpu-sf"` selects bitmap union of published predecessor L
+patterns. Both keep the existing CPU CSR/value preparation. All new options are
+keyword-only in `splu`, `spsolve` and `GLUFactorization`; the existing positional
+arguments retain their meaning. `sf_workers` controls numeric SF workers;
+`symbolic_sf_workers` independently controls symbolic SF workers. Both default
+to 0 for automatic selection. GPU symbolic failures fall back to CPU unless
+`symbolic_no_fallback=True`; input/verification errors always raise. See the
+[interface and default mapping](src/RUN_BATCH.md#符号分析接口一致性) for all options.
+
+The extension now compiles both `numeric.cu` and `symbolic_gpu.cu` with the same
+HTHPCC barrier alias, toolchain flags and PIC. `GCC_TOOLCHAIN`, `GCC_VERSION`,
+`HPCC_PATH`, `HTCC`, `CC` and `CXX` can override the build tools. The default GCC
+toolchain matches `src/Makefile`: `$HOME/local/gcc-7.3.0/usr`.
 
 The SF path uses `src/left_looking_sf.cuh`: persistent CTA workers atomically
 claim increasing natural column IDs, consume each completed predecessor L

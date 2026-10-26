@@ -26,6 +26,13 @@ void help_message()
     cout << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
     cout << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
     cout << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
+    cout << "--symbolic-backend cpu|gpu|gpu-sf (default: cpu; GPU fill-in, CPU CSR/values/levels)" << endl;
+    cout << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
+    cout << "--symbolic-sf-workers N (default: 0 = automatic; requires gpu-sf)" << endl;
+    cout << "--symbolic-pool-entries N / --symbolic-max-pool-entries N (0 = automatic; gpu-sf)" << endl;
+    cout << "--symbolic-block-size 64|128|256 (default: 256)" << endl;
+    cout << "--symbolic-verify (compare GPU CSC arrays with CPU; requires a GPU backend)" << endl;
+    cout << "--symbolic-no-fallback (fail on GPU symbolic errors; requires a GPU backend)" << endl;
     cout << "--residual-tol T (default: 1e-6; absolute ||Ax-b||_2 target)" << endl;
     cout << "--max-refine-iters N|n (default: n = matrix order; 0 disables corrections)" << endl;
     cout << "--progress to flush stage diagnostics while running (for timeout diagnosis)" << endl;
@@ -48,6 +55,7 @@ int main(int argc, char** argv)
     bool refine_limit_is_order = true;
     UpdateStrategy update_strategy = UpdateStrategy::RightLooking;
     SchedulingStrategy scheduling = SchedulingStrategy::Level;
+    SymbolicConfig symbolic_config;
 
     double *ax = NULL, *ax_backup = NULL;
     unsigned int *ai = NULL, *ai_backup = NULL;
@@ -74,6 +82,55 @@ int main(int argc, char** argv)
         }
         else if (strcmp(argv[i], "--progress") == 0) {
             progress = true;
+            i += 1;
+        }
+        else if (strcmp(argv[i], "--symbolic-backend") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            try {
+                symbolic_config.backend = ParseSymbolicBackend(argv[i + 1]);
+            } catch (const std::invalid_argument &e) {
+                cerr << e.what() << endl;
+                return -1;
+            }
+            i += 2;
+        }
+        else if (strcmp(argv[i], "--symbolic-batch-cols") == 0 ||
+                 strcmp(argv[i], "--symbolic-block-size") == 0 ||
+                 strcmp(argv[i], "--symbolic-sf-workers") == 0 ||
+                 strcmp(argv[i], "--symbolic-pool-entries") == 0 ||
+                 strcmp(argv[i], "--symbolic-max-pool-entries") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            try {
+                const std::string value(argv[i + 1]);
+                if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos)
+                    throw std::invalid_argument("invalid symbolic integer");
+                const unsigned long long parsed = std::stoull(value);
+                if ((!parsed && (strcmp(argv[i], "--symbolic-batch-cols") == 0 ||
+                                 strcmp(argv[i], "--symbolic-block-size") == 0)) ||
+                    parsed > std::numeric_limits<unsigned>::max())
+                    throw std::out_of_range("symbolic integer out of range");
+                if (strcmp(argv[i], "--symbolic-batch-cols") == 0)
+                    symbolic_config.batch_cols = static_cast<unsigned>(parsed);
+                else if (strcmp(argv[i], "--symbolic-block-size") == 0)
+                    symbolic_config.block_size = static_cast<unsigned>(parsed);
+                else if (strcmp(argv[i], "--symbolic-sf-workers") == 0)
+                    symbolic_config.sf_workers = static_cast<unsigned>(parsed);
+                else if (strcmp(argv[i], "--symbolic-pool-entries") == 0)
+                    symbolic_config.pool_entries = static_cast<unsigned>(parsed);
+                else
+                    symbolic_config.max_pool_entries = static_cast<unsigned>(parsed);
+            } catch (const std::exception &) {
+                cerr << argv[i] << " must be an unsigned integer (batch/block size must be positive)." << endl;
+                return -1;
+            }
+            i += 2;
+        }
+        else if (strcmp(argv[i], "--symbolic-verify") == 0) {
+            symbolic_config.verify = true;
+            i += 1;
+        }
+        else if (strcmp(argv[i], "--symbolic-no-fallback") == 0) {
+            symbolic_config.fallback_to_cpu = false;
             i += 1;
         }
         else if (strcmp(argv[i], "--sf-workers") == 0) {
@@ -165,6 +222,7 @@ int main(int argc, char** argv)
 
     try {
         ValidateNumericConfiguration(update_strategy, scheduling);
+        ValidateSymbolicConfiguration(symbolic_config);
         if (sf_workers && scheduling != SchedulingStrategy::SynchronizationFree)
             throw std::invalid_argument("--sf-workers requires synchronization-free scheduling");
     } catch (const std::invalid_argument &e) {
@@ -211,7 +269,17 @@ int main(int argc, char** argv)
     // B's CSR arrays are also CSC arrays of B^T. Analyze and factor B^T;
     // solve_CSR below uses the transpose factors to solve the original system.
     Symbolic_Matrix A_sym(n, diagnostics, cerr);
-    A_sym.fill_in(ai, ap);
+    try {
+        A_sym.fill_in(ai, ap, symbolic_config);
+    } catch (const std::exception &e) {
+        cout << solver_output.str();
+        cerr << "Symbolic factorization failed: " << e.what() << endl;
+        NicsLU_Destroy(nicslu);
+        free(nicslu);
+        free(ax); free(ai); free(ap);
+        free(ax_backup); free(ai_backup); free(ap_backup);
+        return -1;
+    }
     t.elapsedWallclockTime(symbolic_ms);
 
     report_stage("CSR construction started");

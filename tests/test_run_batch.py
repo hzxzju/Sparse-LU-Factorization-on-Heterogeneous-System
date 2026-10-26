@@ -23,11 +23,24 @@ parser.add_argument('--sf-workers', type=int, default=0)
 parser.add_argument('--progress', action='store_true')
 parser.add_argument('--residual-tol', type=float, default=1e-6)
 parser.add_argument('--max-refine-iters', default='n')
+parser.add_argument('--symbolic-backend', choices=['cpu', 'gpu', 'gpu-sf'], default='cpu')
+parser.add_argument('--symbolic-sf-workers', type=int, default=0)
+parser.add_argument('--symbolic-pool-entries', type=int, default=0)
+parser.add_argument('--symbolic-max-pool-entries', type=int, default=0)
+parser.add_argument('--symbolic-block-size', type=int, default=256)
+parser.add_argument('--symbolic-batch-cols', type=int, default=128)
+parser.add_argument('--symbolic-verify', action='store_true')
+parser.add_argument('--symbolic-no-fallback', action='store_true')
 args = parser.parse_args()
+print('symbolic_batch_cols={}'.format(args.symbolic_batch_cols), flush=True)
 mode = Path(args.i).stem
 print('tolerance={} limit={}'.format(args.residual_tol, args.max_refine_iters), flush=True)
 print('strategy={} scheduling={} perturb={}'.format(args.u, args.s, args.p), flush=True)
 print('workers={} progress={}'.format(args.sf_workers, args.progress), flush=True)
+print('symbolic={} workers={} pool={} maxpool={} threads={} verify={} strict={}'.format(
+    args.symbolic_backend, args.symbolic_sf_workers, args.symbolic_pool_entries,
+    args.symbolic_max_pool_entries, args.symbolic_block_size,
+    args.symbolic_verify, args.symbolic_no_fallback), flush=True)
 if mode == 'timeout':
     time.sleep(10)
 if mode == 'failed':
@@ -79,7 +92,7 @@ class BatchTimingTests(unittest.TestCase):
         with (self.output / "summary.csv").open(encoding="utf-8-sig", newline="") as stream:
             reader = csv.DictReader(stream)
             rows = list(reader)
-            self.assertEqual(len(reader.fieldnames), 23)
+            self.assertIn("symbolic_backend", reader.fieldnames)
         self.assertEqual({p.name for p in self.output.iterdir()},
                          {"summary.csv"} | {"{:04d}_{}".format(i, name)
                                            for i, name in enumerate(sorted(names), 1)})
@@ -93,6 +106,7 @@ class BatchTimingTests(unittest.TestCase):
         result, rows = self.run_batch(["small"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         row = rows[0]
+        self.assertEqual(row["symbolic_backend"], "cpu")
         self.assertEqual((row["status"], row["exit_code"]), ("ok", "0"))
         self.assertEqual((row["update_strategy"], row["scheduling"], row["perturb"]),
                          ("right-looking", "level", "0"))
@@ -131,6 +145,37 @@ class BatchTimingTests(unittest.TestCase):
                                      "--sf-workers", "1", "--progress")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("workers=1 progress=True", (self.output / rows[0]["log_path"]).read_text())
+
+    def test_symbolic_sf_options_reach_solver(self):
+        result, rows = self.run_batch(["small"], "--symbolic-backend", "gpu-sf",
+            "--symbolic-sf-workers", "3", "--symbolic-pool-entries", "1",
+            "--symbolic-max-pool-entries", "100", "--symbolic-block-size", "64",
+            "--symbolic-verify", "--symbolic-no-fallback")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(rows[0]["symbolic_backend"], "gpu-sf")
+        self.assertIn("symbolic=gpu-sf workers=3 pool=1 maxpool=100 threads=64 verify=True strict=True",
+                      (self.output / rows[0]["log_path"]).read_text())
+
+    def test_graph_batch_option_reaches_solver(self):
+        result, rows = self.run_batch(["small"], "--symbolic-backend", "gpu",
+                                     "--symbolic-batch-cols", "7")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(rows[0]["symbolic_backend"], "gpu")
+        self.assertIn("symbolic_batch_cols=7", (self.output / rows[0]["log_path"]).read_text())
+
+    def test_invalid_symbolic_options(self):
+        for options in (("--symbolic-sf-workers", "1"), ("--symbolic-verify",),
+                        ("--symbolic-batch-cols", "0"), ("--symbolic-batch-cols", "4294967296"),
+                        ("--symbolic-backend", "gpu-sf", "--symbolic-pool-entries", "-1"),
+                        ("--symbolic-backend", "gpu-sf", "--symbolic-sf-workers", "4294967296"),
+                        ("--symbolic-backend", "gpu-sf", "--symbolic-pool-entries", "2",
+                         "--symbolic-max-pool-entries", "1")):
+            result = subprocess.run([sys.executable, str(ROOT / "src/run_batch.py")] + list(options),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    universal_newlines=True)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("symbolic", result.stderr)
+            self.assertFalse(self.output.exists())
 
     def test_refinement_options_reach_solver(self):
         result, rows = self.run_batch(["small"], "--residual-tol", "1e-5",

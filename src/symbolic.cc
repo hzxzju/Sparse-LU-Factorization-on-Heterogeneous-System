@@ -8,15 +8,37 @@
 
 using namespace std;
 
+void Symbolic_Matrix::reset_derived_structure()
+{
+    csr_r_ptr.clear();
+    csr_c_idx.clear();
+    csr_diag_ptr.clear();
+    val.clear();
+    level_ptr.clear();
+    level_idx.clear();
+    num_lev = 0;
+#if GLU_DEBUG
+    CCA.clear();
+#endif
+}
+
 void Symbolic_Matrix :: fill_in(unsigned *ai, unsigned *ap)
 {
+    // CPU and GPU commits invalidate the same numeric/CSR/level caches.
+    reset_derived_structure();
+    sym_c_ptr.clear();
+    sym_r_idx.clear();
+    l_col_ptr.clear();
+    nnz = 0;
     sym_c_ptr.push_back(0);
     vector<unsigned> :: iterator it;
 
     for (unsigned i = 0; i < n; ++i)
     {
         vector<unsigned> tmpcol1;
-        vector<unsigned> tmpcol2(ai + ap[i], ai + ap[i+1]);
+        vector<unsigned> tmpcol2;
+        if (ap[i] != ap[i + 1])
+            tmpcol2.assign(ai + ap[i], ai + ap[i + 1]);
         sort(tmpcol2.begin(), tmpcol2.end());
 
         for (unsigned j = 0; j < tmpcol2.size(); ++j)
@@ -48,12 +70,16 @@ void Symbolic_Matrix :: fill_in(unsigned *ai, unsigned *ap)
     }
 
     nnz = sym_c_ptr.back();
+    symbolic_backend = SymbolicBackend::CPU;
 
     m_out << "Symbolic nonzero: " << nnz << endl;
 }
 
 void Symbolic_Matrix :: csr()
 {
+    csr_r_ptr.clear();
+    csr_c_idx.clear();
+    csr_diag_ptr.clear();
     csr_r_ptr.push_back(0);
     vector<vector<unsigned> > buffer(n, vector<unsigned>());
 
@@ -81,9 +107,14 @@ void Symbolic_Matrix :: csr()
 //Construct val vector (including filled in zeros) of symbolic_matrix
 void Symbolic_Matrix :: predictLU (unsigned *ai, unsigned *ap, double *ax)
 {
+    val.clear();
     val.reserve(nnz);
     for (unsigned i = 0; i < n; ++i)
     {
+        if (ap[i] == ap[i + 1]) {
+            val.insert(val.end(), sym_c_ptr[i + 1] - sym_c_ptr[i], REAL(0));
+            continue;
+        }
         unsigned *start = ai + ap[i];
         unsigned *end = ai + ap[i+1];
         for (unsigned j = sym_c_ptr[i]; j < sym_c_ptr[i+1]; ++j)
@@ -105,6 +136,14 @@ void Symbolic_Matrix :: predictLU (unsigned *ai, unsigned *ap, double *ax)
 
 void Symbolic_Matrix :: leveling()
 {
+    level_ptr.clear();
+    level_idx.clear();
+    num_lev = 0;
+    if (n == 0) {
+        level_ptr.push_back(0);
+        m_out << "Number of levels: 0" << endl;
+        return;
+    }
     vector<int> inlevel, level_size(n, 0);
     inlevel.reserve(n);
 
