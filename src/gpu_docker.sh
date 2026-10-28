@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-gpu_index=${GPU_INDEX:-1}
+gpu_index=${GPU_INDEX:-3}
 case "$gpu_index" in
     0|1|2|3) ;;
     *) echo 'GPU_INDEX must be 0, 1, 2 or 3' >&2; exit 2 ;;
@@ -36,8 +36,7 @@ case "$action" in
             "${docker_cmd[@]}" start "$container"
         else
             gcc_toolchain=${GCC_TOOLCHAIN:-$HOME/local/gcc-7.3.0/usr}
-            for path in "$ren+
-            der" /dev/htcd /opt/hpcc /opt/htdriver "$gcc_toolchain"; do
+            for path in "$render" /dev/htcd /opt/hpcc /opt/htdriver "$gcc_toolchain"; do
                 if [[ ! -e "$path" ]]; then echo "Missing host path: $path" >&2; exit 1; fi
             done
             "${docker_cmd[@]}" run -d --name "$container" --hostname "$container" \
