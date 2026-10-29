@@ -9,6 +9,7 @@
 using hcError_t = cudaError_t;
 using hcEvent_t = cudaEvent_t;
 using hcStream_t = cudaStream_t;
+using hcFuncAttributes = cudaFuncAttributes;
 struct hcDeviceProp_t : cudaDeviceProp { int waveSize; };
 inline hcError_t hcGetDeviceProperties(hcDeviceProp_t *props, int device)
 {
@@ -39,5 +40,8 @@ inline hcError_t hcGetDeviceProperties(hcDeviceProp_t *props, int device)
 #define hcDeviceSynchronize cudaDeviceSynchronize
 #define hcGetLastError cudaGetLastError
 #define hcGetErrorString cudaGetErrorString
+#define hcFuncGetAttributes cudaFuncGetAttributes
+#define hcOccupancyMaxActiveBlocksPerMultiprocessor cudaOccupancyMaxActiveBlocksPerMultiprocessor
+#define hcLaunchCooperativeKernel cudaLaunchCooperativeKernel
 
 #endif

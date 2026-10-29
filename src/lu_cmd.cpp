@@ -26,6 +26,7 @@ void help_message()
     cout << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
     cout << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
     cout << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
+    cout << "--numeric-sm-padding (experimental; default off; requires LL-SF)" << endl;
     cout << "--symbolic-backend auto|cpu|gpu|gpu-sf (default: auto; CPU/GPU-SF selected by input structure)" << endl;
     cout << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
     cout << "--symbolic-sf-workers N (default: 0 = automatic; requires auto or gpu-sf)" << endl;
@@ -50,6 +51,7 @@ int main(int argc, char** argv)
     bool PERTURB = false;
     bool progress = false;
     unsigned sf_workers = 0;
+    bool numeric_sm_padding = false;
     double residual_tolerance = 1e-6;
     unsigned max_refine_iters = 0;
     bool refine_limit_is_order = true;
@@ -82,6 +84,10 @@ int main(int argc, char** argv)
         }
         else if (strcmp(argv[i], "--progress") == 0) {
             progress = true;
+            i += 1;
+        }
+        else if (strcmp(argv[i], "--numeric-sm-padding") == 0) {
+            numeric_sm_padding = true;
             i += 1;
         }
         else if (strcmp(argv[i], "--symbolic-backend") == 0) {
@@ -221,7 +227,7 @@ int main(int argc, char** argv)
     }
 
     try {
-        ValidateNumericConfiguration(update_strategy, scheduling);
+        ValidateNumericConfiguration(update_strategy, scheduling, numeric_sm_padding);
         ValidateSymbolicConfiguration(symbolic_config);
         if (sf_workers && scheduling != SchedulingStrategy::SynchronizationFree)
             throw std::invalid_argument("--sf-workers requires synchronization-free scheduling");
@@ -309,7 +315,8 @@ int main(int argc, char** argv)
     std::ostringstream numeric_errors;
     report_stage("GPU numeric LU started");
     t.start();
-    LUonDevice(A_sym, diagnostics, numeric_errors, PERTURB, update_strategy, scheduling, sf_workers);
+    LUonDevice(A_sym, diagnostics, numeric_errors, PERTURB, update_strategy, scheduling,
+               sf_workers, numeric_sm_padding);
     t.elapsedWallclockTime(numeric_ms);
     if (!numeric_errors.str().empty()) {
         cout << solver_output.str();

@@ -23,6 +23,7 @@ LDLIBS += -lpthread -lm -lrt -ldl
 
 .PHONY: MAIN all clean distclean test-symbolic-gpu test-symbolic-host test-symbolic-auto test-symbolic-sf-gpu test-symbolic-sf-host test-gpu-device-selection
 .DELETE_ON_ERROR:
+.PHONY: test-numeric-sm-padding-host
 MAIN: $(EXE)
 all: MAIN
 
@@ -32,7 +33,7 @@ $(EXE): $(OBJS) $(PREPROCESS_LIBS) Makefile
 Timer.o: Timer.cpp Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
-numeric.o: numeric.cu left_looking.cuh left_looking_sf.cuh sf_sync.cuh Makefile
+numeric.o: numeric.cu left_looking.cuh left_looking_sf.cuh sf_sync.cuh numeric_sm_padding.cuh ../include/numeric_sm_padding.h Makefile
 	$(HTCC) $(CPPFLAGS) $(HTCC_CPPFLAGS) $(HTCCFLAGS) $(HTCC_GCC_FLAGS) -MMD -MP -c $< -o $@
 
 symbolic.o: symbolic.cc Makefile
@@ -71,6 +72,16 @@ symbolic_auto_test: ../tests/symbolic_auto.cpp ../include/symbolic.h Makefile
 test-symbolic-auto: symbolic_auto_test
 	./symbolic_auto_test
 
+numeric_sm_padding_host_test: ../tests/numeric_sm_padding.cpp ../include/numeric_sm_padding.h ../include/numeric.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) ../tests/numeric_sm_padding.cpp -o $@
+
+test-numeric-sm-padding-host: numeric_sm_padding_host_test
+	./numeric_sm_padding_host_test
+
+numeric_strategies_test: Timer.o numeric.o symbolic.o ../tests/numeric_strategies.cpp Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c ../tests/numeric_strategies.cpp -o test_numeric_strategies.o
+	$(HTCC) $(HTCC_GCC_FLAGS) $(LDFLAGS) Timer.o numeric.o symbolic.o test_numeric_strategies.o $(LDLIBS) -o $@
+
 symbolic_sf_host_test: symbolic.o ../tests/symbolic_sf_host.cpp symbolic_sf.cuh ../include/symbolic.h Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -pthread ../tests/symbolic_sf_host.cpp symbolic.o -o $@
 
@@ -99,6 +110,7 @@ nicslu/util/nicslu_util.a: $(wildcard nicslu/util/*.c nicslu/util/*.h nicslu/inc
 	$(MAKE) -C nicslu util
 
 clean:
+	rm -f numeric_sm_padding_host_test numeric_strategies_test test_numeric_strategies.o
 	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test symbolic_auto_test
 	$(MAKE) -C preprocess clean
 	$(MAKE) -C nicslu/lib clean

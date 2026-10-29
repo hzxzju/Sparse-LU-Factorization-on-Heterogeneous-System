@@ -147,8 +147,9 @@ glu_ext = Extension(
     sources=["src/glu_binding.cpp"],
     depends=["src/" + name for name in
              ("numeric.cu", "symbolic_gpu.cu", "symbolic_sf.cuh", "symbolic.cc",
-              "left_looking.cuh", "left_looking_sf.cuh", "sf_sync.cuh")]
-            + ["include/numeric.h", "include/numeric_util.h", "include/symbolic.h", "include/gpu_device.h"],
+              "left_looking.cuh", "left_looking_sf.cuh", "sf_sync.cuh", "numeric_sm_padding.cuh")]
+            + ["include/numeric.h", "include/numeric_util.h", "include/numeric_sm_padding.h",
+               "include/symbolic.h", "include/gpu_device.h"],
     include_dirs=[
         str(INCLUDE),
         str(NICSLU / "include"),

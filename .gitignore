@@ -17,6 +17,8 @@
 /src/symbolic_gpu_numeric_test
 /src/gpu_device_selection_test
 /src/gpu_device_probe
+/src/numeric_sm_padding_host_test
+/src/numeric_strategies_test
 /src/nicslu/demo/demos
 /src/nicslu/demo/demop
 /src/nicslu/demo/test

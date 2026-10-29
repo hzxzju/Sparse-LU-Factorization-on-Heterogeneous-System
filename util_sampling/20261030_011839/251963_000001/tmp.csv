@@ -1,0 +1,4 @@
+timestamp,deviceId,dieId,deviceName,bdfId,utilization.GPU [%],utilization.VPUE [%],utilization.VPUD [%]
+2026/10/30 1:18:52.505284,GPU#0,-,X201,0000:96:00.0,0,0,0
+2026/10/30 1:18:52.526513,GPU#1,-,X201,0000:ab:00.0,0,0,0
+2026/10/30 1:18:52.547713,GPU#2,-,X201,0000:c1:00.0,0,0,0

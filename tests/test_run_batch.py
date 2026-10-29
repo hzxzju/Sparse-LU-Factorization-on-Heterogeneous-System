@@ -20,6 +20,7 @@ parser.add_argument('-u', required=True)
 parser.add_argument('-s', required=True)
 parser.add_argument('-p', action='store_true')
 parser.add_argument('--sf-workers', type=int, default=0)
+parser.add_argument('--numeric-sm-padding', action='store_true')
 parser.add_argument('--progress', action='store_true')
 parser.add_argument('--residual-tol', type=float, default=1e-6)
 parser.add_argument('--max-refine-iters', default='n')
@@ -37,6 +38,7 @@ mode = Path(args.i).stem
 print('tolerance={} limit={}'.format(args.residual_tol, args.max_refine_iters), flush=True)
 print('strategy={} scheduling={} perturb={}'.format(args.u, args.s, args.p), flush=True)
 print('workers={} progress={}'.format(args.sf_workers, args.progress), flush=True)
+print('numeric_sm_padding={}'.format(args.numeric_sm_padding), flush=True)
 print('symbolic={} workers={} pool={} maxpool={} threads={} verify={} strict={}'.format(
     args.symbolic_backend, args.symbolic_sf_workers, args.symbolic_pool_entries,
     args.symbolic_max_pool_entries, args.symbolic_block_size,
@@ -107,6 +109,8 @@ class BatchTimingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         row = rows[0]
         self.assertEqual(row["symbolic_backend"], "auto")
+        self.assertEqual(row["numeric_sm_padding"], "0")
+        self.assertIn("numeric_sm_padding=False", (self.output / row["log_path"]).read_text())
         self.assertEqual((row["status"], row["exit_code"]), ("ok", "0"))
         self.assertEqual((row["update_strategy"], row["scheduling"], row["perturb"]),
                          ("right-looking", "level", "0"))
@@ -155,6 +159,25 @@ class BatchTimingTests(unittest.TestCase):
         self.assertEqual(rows[0]["symbolic_backend"], "gpu-sf")
         self.assertIn("symbolic=gpu-sf workers=3 pool=1 maxpool=100 threads=64 verify=True strict=True",
                       (self.output / rows[0]["log_path"]).read_text())
+
+    def test_numeric_sm_padding_is_forwarded_and_recorded(self):
+        result, rows = self.run_batch(["small"], "--update-strategy", "left-looking",
+            "--scheduling", "synchronization-free", "--sf-workers", "49", "--numeric-sm-padding")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(rows[0]["numeric_sm_padding"], "1")
+        log = (self.output / rows[0]["log_path"]).read_text()
+        self.assertIn("numeric_sm_padding=True", log)
+        self.assertIn("workers=49", log)
+
+    def test_numeric_sm_padding_rejects_incompatible_scheduling(self):
+        for options in (("--numeric-sm-padding",),
+                        ("--numeric-sm-padding", "--update-strategy", "left-looking"),
+                        ("--numeric-sm-padding", "--scheduling", "synchronization-free")):
+            result = subprocess.run([sys.executable, str(ROOT / "src/run_batch.py")] + list(options),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("--numeric-sm-padding requires", result.stderr)
+            self.assertFalse(self.output.exists())
 
     def test_auto_accepts_gpu_options(self):
         result, rows = self.run_batch(["small"], "--symbolic-backend", "auto",

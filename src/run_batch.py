@@ -29,7 +29,7 @@ METRICS = {
     "Ax-b (infinite-norm):": ("residual_linf", float),
 }
 FIELDS = [
-    "matrix", "update_strategy", "scheduling", "perturb", "symbolic_backend", "status", "exit_code",
+    "matrix", "update_strategy", "scheduling", "perturb", "symbolic_backend", "numeric_sm_padding", "status", "exit_code",
     "n", "nnz", "preprocessing_time", "symbolic_time", "csr_time",
     "predictlu_time", "leveling_time", "symbolic_preparation_time",
     "numeric_lu_time", "triangular_solve_time", "total_solve_ms",
@@ -65,6 +65,8 @@ def main():
     parser.add_argument("--perturb", action="store_true", help="pass -p to lu_cmd")
     parser.add_argument("--sf-workers", type=int, default=0,
                         help="SF workers; 0 selects automatically, 1 helps diagnose inter-worker waits")
+    parser.add_argument("--numeric-sm-padding", action="store_true",
+                        help="experimental one-block-per-SM numeric grid with idle padding (LL-SF only; default off)")
     parser.add_argument("--progress", action="store_true",
                         help="flush solver stage diagnostics to solver.log while running")
     parser.add_argument("--residual-tol", type=float, default=1e-6,
@@ -110,6 +112,9 @@ def main():
         parser.error("--sf-workers must be between 0 and 4294967295")
     if args.sf_workers and args.scheduling != "synchronization-free":
         parser.error("--sf-workers requires --scheduling synchronization-free")
+    if args.numeric_sm_padding and (args.update_strategy != "left-looking" or
+                                    args.scheduling != "synchronization-free"):
+        parser.error("--numeric-sm-padding requires --update-strategy left-looking --scheduling synchronization-free")
     if not math.isfinite(args.timeout) or args.timeout < 0:
         parser.error("--timeout must be finite and nonnegative")
     if args.scheduling == "synchronization-free" and args.update_strategy != "left-looking":
@@ -167,11 +172,14 @@ def main():
                 command.append("-p")
             if args.sf_workers:
                 command.extend(["--sf-workers", str(args.sf_workers)])
+            if args.numeric_sm_padding:
+                command.append("--numeric-sm-padding")
             if args.progress:
                 command.append("--progress")
             row = dict(matrix=str(matrix.relative_to(matrix_dir)),
                        update_strategy=args.update_strategy, scheduling=args.scheduling,
                        symbolic_backend=args.symbolic_backend,
+                       numeric_sm_padding=int(args.numeric_sm_padding),
                        perturb=int(args.perturb), status="ok", exit_code="",
                        log_path=str(log_path.relative_to(output_dir)), solution_path="",
                        note="")

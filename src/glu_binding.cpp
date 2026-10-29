@@ -38,7 +38,8 @@ public:
         bool symbolic_no_fallback,
         unsigned symbolic_sf_workers,
         unsigned symbolic_pool_entries,
-        unsigned symbolic_max_pool_entries);
+        unsigned symbolic_max_pool_entries,
+        bool numeric_sm_padding);
 
     GLUFactorization(const GLUFactorization &) = delete;
     GLUFactorization &operator=(const GLUFactorization &) = delete;
@@ -87,11 +88,12 @@ GLUFactorization::GLUFactorization(
     bool symbolic_no_fallback,
     unsigned symbolic_sf_workers,
     unsigned symbolic_pool_entries,
-    unsigned symbolic_max_pool_entries)
+    unsigned symbolic_max_pool_entries,
+    bool numeric_sm_padding)
 {
     m_update_strategy = ParseUpdateStrategy(update_strategy);
     m_scheduling = ParseSchedulingStrategy(scheduling);
-    ValidateNumericConfiguration(m_update_strategy, m_scheduling);
+    ValidateNumericConfiguration(m_update_strategy, m_scheduling, numeric_sm_padding);
     if (sf_workers && m_scheduling != SchedulingStrategy::SynchronizationFree)
         throw std::invalid_argument("sf_workers requires synchronization-free scheduling");
     SymbolicConfig symbolic_config;
@@ -180,7 +182,8 @@ GLUFactorization::GLUFactorization(
     ax_owner.reset(); ai_owner.reset(); ap_owner.reset();
 
     /* GPU factorization — overwrites m_sym->val with LU factors */
-    LUonDevice(*m_sym, m_out, m_err, perturb, m_update_strategy, m_scheduling, sf_workers);
+    LUonDevice(*m_sym, m_out, m_err, perturb, m_update_strategy, m_scheduling,
+               sf_workers, numeric_sm_padding);
 
     /* Surface device-factorization errors reported by the GPU backend. */
     std::string err_msg = m_err.str();
@@ -240,7 +243,7 @@ PYBIND11_MODULE(_pyglu, m) {
                 unsigned,
                 const std::string &,
                 unsigned, unsigned, bool, bool,
-                unsigned, unsigned, unsigned>(),
+                unsigned, unsigned, unsigned, bool>(),
             py::arg("data"),
             py::arg("indices"),
             py::arg("indptr"),
@@ -258,6 +261,7 @@ PYBIND11_MODULE(_pyglu, m) {
             py::arg("symbolic_sf_workers") = 0,
             py::arg("symbolic_pool_entries") = 0,
             py::arg("symbolic_max_pool_entries") = 0,
+            py::arg("numeric_sm_padding") = false,
             R"(Factorize a sparse matrix given in CSC format.
 
             Parameters
@@ -278,6 +282,7 @@ PYBIND11_MODULE(_pyglu, m) {
             symbolic_sf_workers : int                -- symbolic SF workers; 0 = automatic
             symbolic_pool_entries : int              -- initial SF arena size; 0 = automatic
             symbolic_max_pool_entries : int          -- SF arena cap; 0 = memory budget
+            numeric_sm_padding : bool                -- experimental LL-SF SM activity padding; default off
             )")
         .def("solve", &GLUFactorization::solve, py::arg("b"),
             R"(Solve Ax = b.

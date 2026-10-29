@@ -41,7 +41,8 @@ class ParameterTests(unittest.TestCase):
         self.assertEqual(self.factorization.call_args[1], dict(
             sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
             symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
-            symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0))
+            symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0,
+            numeric_sm_padding=False))
 
     def test_left_looking_with_perturbation(self):
         self.module.splu(self.matrix, perturb=True, update_strategy="left-looking")
@@ -86,7 +87,8 @@ class ParameterTests(unittest.TestCase):
     def test_symbolic_options_reach_both_native_entry_points(self):
         options = dict(sf_workers=1, symbolic_backend="gpu-sf", symbolic_batch_cols=3,
                        symbolic_block_size=64, symbolic_verify=True, symbolic_no_fallback=True,
-                       symbolic_sf_workers=2, symbolic_pool_entries=1, symbolic_max_pool_entries=128)
+                       symbolic_sf_workers=2, symbolic_pool_entries=1, symbolic_max_pool_entries=128,
+                       numeric_sm_padding=True)
         self.module.splu(self.matrix, update_strategy="ll", scheduling="synchronization-free", **options)
         factor_args, factor_kwargs = self.factorization.call_args
         self.assertEqual(factor_kwargs, options)
