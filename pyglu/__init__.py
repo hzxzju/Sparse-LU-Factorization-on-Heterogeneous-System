@@ -63,7 +63,7 @@ def _to_csc_arrays(A):
 
 
 def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", *,
-         sf_workers=0, symbolic_backend="cpu", symbolic_batch_cols=128,
+         sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
          symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
          symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0):
     """Compute the sparse LU factorization of A on the GPU.
@@ -82,9 +82,13 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
         updates. Independent of the symbolic backend.
     sf_workers : int, optional
         Numeric SF worker limit; 0 selects automatically. Requires SF scheduling.
-    symbolic_backend : {"cpu", "gpu", "gpu-sf"}, optional
-        Default "cpu". "gpu" uses graph search; "gpu-sf" merges published L
-        patterns with bitmap workers and incremental checkpoints.
+    symbolic_backend : {"auto", "cpu", "gpu", "gpu-sf"}, optional
+        Default "auto" selects GPU-SF when n >= 20000, max column nnz / n >=
+        0.1, max column nnz / mean column nnz >= 64, and
+        sum(m_j * max(0, m_j - (n-j))) >= 1e9 after preprocessing; otherwise CPU.
+        "gpu" uses graph search; "gpu-sf" merges published L patterns with
+        bitmap workers and incremental checkpoints. Selection scans column
+        pointers in O(n) time and O(1) extra space.
     symbolic_batch_cols : int, optional
         Positive graph GPU workspace slot limit. Default 128.
     symbolic_block_size : {64, 128, 256}, optional
@@ -93,12 +97,13 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
         Compare all three GPU CSC arrays against CPU fill-in. Default False.
     symbolic_no_fallback : bool, optional
         Raise on GPU symbolic failure instead of using CPU. Default False.
-        Verification and input errors always raise. Requires a GPU backend.
+        Verification and input errors always raise. With "auto", GPU options
+        apply only when GPU-SF is selected; selecting CPU is not a fallback.
     symbolic_sf_workers : int, optional
         Symbolic SF worker limit, separate from sf_workers; 0 = automatic.
     symbolic_pool_entries, symbolic_max_pool_entries : int, optional
         Initial/capped sparse SF arena capacities in row entries; 0 = automatic.
-        Nonzero worker/pool options require symbolic_backend="gpu-sf".
+        Nonzero worker/pool options require symbolic_backend="auto" or "gpu-sf".
 
     Returns
     -------
@@ -131,7 +136,7 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
 
 
 def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="level", *,
-            sf_workers=0, symbolic_backend="cpu", symbolic_batch_cols=128,
+            sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
             symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
             symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0):
     """Solve the sparse linear system Ax = b on the GPU.

@@ -39,13 +39,28 @@ class ParameterTests(unittest.TestCase):
         self.module.splu(self.matrix)
         self.assertEqual(self.factorization.call_args[0][-3:], (False, "right-looking", "level"))
         self.assertEqual(self.factorization.call_args[1], dict(
-            sf_workers=0, symbolic_backend="cpu", symbolic_batch_cols=128,
+            sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
             symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
             symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0))
 
     def test_left_looking_with_perturbation(self):
         self.module.splu(self.matrix, perturb=True, update_strategy="left-looking")
         self.assertEqual(self.factorization.call_args[0][-3:], (True, "left-looking", "level"))
+
+    def test_default_spsolve_uses_auto_symbolic(self):
+        self.module.spsolve(self.matrix, [4, 6])
+        self.assertEqual(self.factorization.call_args[1]["symbolic_backend"], "auto")
+
+    def test_explicit_cpu_overrides_auto(self):
+        self.module.splu(self.matrix, symbolic_backend="cpu")
+        self.assertEqual(self.factorization.call_args[1]["symbolic_backend"], "cpu")
+
+    def test_auto_forwards_gpu_options(self):
+        self.module.splu(self.matrix, symbolic_backend="auto", symbolic_sf_workers=3,
+                         symbolic_verify=True, symbolic_no_fallback=True)
+        self.assertEqual(self.factorization.call_args[1]["symbolic_backend"], "auto")
+        self.assertEqual(self.factorization.call_args[1]["symbolic_sf_workers"], 3)
+        self.assertTrue(self.factorization.call_args[1]["symbolic_no_fallback"])
 
     def test_alias_reaches_native_parser(self):
         self.module.splu(self.matrix, update_strategy="ll")

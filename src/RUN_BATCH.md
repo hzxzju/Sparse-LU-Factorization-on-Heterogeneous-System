@@ -49,7 +49,9 @@ python3 src/run_batch.py
 CSV 不再计算或保存 `relative_residual_l2`。这些残差不能替代与参考解比较的
 `||x-x_ref||₂ / ||x_ref||₂`。残差基于原始矩阵和最终保留的解，使用 CPU
 `long double` 累加（额外精度取决于平台），日志保留至少 17 位有效数字。
-`x.dat` 使用科学计数法和至少 17 位有效数字，避免固定小数位截断。
+最终日志中的 L2 范数转为 `double` 输出，收敛判断使用转换前的高精度值。
+`x.dat` 使用科学计数法和 `long double` 的 `max_digits10` 精度，保留高精度解；
+重新校验时也需以 `long double` 或更高精度读取，转回 `double` 可能丢失校正效果。
 
 ## 计时范围与执行方式
 
@@ -106,10 +108,10 @@ Ctrl+C 中断时返回 130。`status=ok` 表示进程正常退出、所有指标
 ## GPU 符号分析 SF（2026-10-26）
 
 按照 [SF 实施说明](../docs/GLU_GPU_Symbolic_SF_Codex_Implementation_Spec.md)
-新增 `gpu-sf`，保留默认 `cpu` 与旧图搜索 `gpu` 供回归和性能对照。
+新增 `gpu-sf`，保留 `cpu` 与旧图搜索 `gpu` 供回归和性能对照。
 符号后端独立于数值 LU 的 `-u/-s`；例如符号 SF 也能接 RL-level。
 后续 `csr()`、`predictLU()`、`leveling()` 与数值 LU 继续使用原来的主机 CSC 布局。
-Python `pyglu`、C++ 配置、`lu_cmd` 和批量脚本均可选择同样的三个符号后端，默认仍为 CPU。
+Python `pyglu`、C++ 配置、`lu_cmd` 和批量脚本均可选择 `auto/cpu/gpu/gpu-sf`，默认 `auto`。
 
 ```sh
 make -C src MAIN symbolic_gpu_test symbolic_gpu_numeric_test DEBUG=0 -j2
@@ -127,7 +129,7 @@ python3 src/run_batch.py --update-strategy left-looking \
 
 | 参数（求解器与批量脚本均支持） | 默认值 | 含义 |
 | --- | --- | --- |
-| `--symbolic-backend cpu\|gpu\|gpu-sf` | `cpu` | CPU、旧图搜索、新 SF |
+| `--symbolic-backend auto\|cpu\|gpu\|gpu-sf` | `auto` | 按输入结构选择 CPU/SF，或显式指定 CPU、旧图搜索、新 SF |
 | `--symbolic-sf-workers N` | `0` | SF worker 数，0 按 `2 × MP` 自动选择，并受 n、显存和设备限制 |
 | `--symbolic-block-size N` | `256` | 64、128 或 256，遵守原生 64-lane wave |
 | `--symbolic-pool-entries N` | 自动 | 每个稀疏行号 arena 的初始容量，单位 unsigned 条目；正数可用于小池重试测试 |
@@ -135,10 +137,25 @@ python3 src/run_batch.py --update-strategy left-looking \
 | `--symbolic-verify` | 关闭 | 运行 CPU golden 并逐元素比较 `sym_c_ptr/sym_r_idx/l_col_ptr` |
 | `--symbolic-no-fallback` | 关闭 | GPU 初始化、资源或调度错误直接失败；默认显式记录后回退 CPU |
 
-workers/pool 参数只适用于 `gpu-sf`；verify/no-fallback 需要 GPU 后端。
+workers/pool 参数可用于 `auto`、`gpu-sf`；verify/no-fallback 可用于 `auto` 或 GPU 后端。
+`auto` 选中 CPU 时这些 GPU 参数不生效，选中 CPU 本身不属于 fallback。
 求解器的 `--symbolic-batch-cols` 仍仅控制旧 `gpu` 的 workspace slot 上限，
 新 SF 使用独立的 `--symbolic-sf-workers`。它与数值 LU 的 `--sf-workers` 含义不同，
 无需为了调整符号 worker 而修改数值调度。
+
+默认 `auto` 在预处理后、`fill_in` 开始时，只扫描实际传入的列指针。
+令 `m_j = ap[j+1] - ap[j]`、`B = Σ m_j × max(0, m_j - (n-j))`，`j` 从 0 编号。
+同时满足 `n >= 20000`、`max(m_j)/n >= 0.10`、
+`max(m_j)/(nnz/n) >= 64`、`B >= 10^9` 时使用 GPU-SF，否则使用 CPU。
+复杂度为 O(n) 时间、O(1) 额外空间；64 位整数比较保留全部阈值边界，判断不初始化 GPU。
+CLI 此处将重排后的 CSR 当作转置矩阵的 CSC，因此使用预处理后的实际顺序进行判断。
+显式传 `cpu`、`gpu`、`gpu-sf` 可覆盖自动选择。
+
+日志保留 `Symbolic requested backend: auto`、`Symbolic auto selected backend`，
+以及 `symbolic_auto_input_nnz`、`symbolic_auto_max_column_nnz`、
+`symbolic_auto_copy_lower_bound`、`symbolic_auto_ms`。
+自动判断计入完整 `Symbolic time`；`summary.csv` 的 `symbolic_backend` 记录请求值 `auto`，
+实际使用的后端和可能的 GPU 失败回退见日志。CPU 选择路径不做 GPU 设备探测。
 
 ### 算法与发布协议
 
@@ -286,7 +303,8 @@ python3 src/run_batch.py --residual-tol 1e-6 --max-refine-iters 10
 ```
 
 首次求解达标时不做额外三角求解。否则使用原始矩阵计算 `r=b-Ax`，调用现有
-`solve_CSR` 解出校正量 `δx`（内部处理置换、缩放），再更新 `x←x+δx`。
+`solve_CSR` 解出 double 校正量 `δx`（内部处理置换、缩放），再以 `long double`
+保存解向量并执行 `x←x+δx`，避免小于 double 表示间距的校正量在更新时丢失。
 GPU LU 因子保持复用，不重新分解。每轮检查候选解，达到阈值或用完上限即停止。
 残差不下降时提前停止（`stagnated`），非有限数值时停止（`nonfinite`）；拒绝这些
 候选更新并保留此前最好解。最终状态还包括 `converged` 和 `max_iterations`。
@@ -322,7 +340,7 @@ timeout 60s ./src/lu_cmd -i src/matrix/ASIC_100k_csr.mtx \
 矩阵规模和设备限制，见日志 `LL-SF workers`。非零值只能与 SF 一起使用。
 单 worker 用于诊断，不能据此判断多 worker 的同步正确性或并行性能。
 
-- 停在 `symbolic fill-in`：默认 cpu 后端在 CPU 准备；选 gpu/gpu-sf 时也可能在设备初始化、符号 worker 或 pack。
+- 停在 `symbolic fill-in`：查看 `auto` 选择结果；CPU 路径在主机准备，GPU 路径也可能在设备初始化、符号 worker 或 pack。
 - 停在 `numeric value preparation`：在 CPU `predictLU`。
 - 停在 `GPU numeric LU started`，没有出现 kernel 启动消息：检查设备初始化、上传和工作区分配。
 - 停在 `LL-SF kernel launch; waiting for completion...`：kernel 启动/同步尚未返回，
@@ -347,7 +365,7 @@ timeout 60s ./src/lu_cmd -i src/matrix/ASIC_100k_csr.mtx \
 
 | CLI / run_batch.py | Python keyword | SymbolicConfig 字段 | 默认值 |
 | --- | --- | --- | --- |
-| `--symbolic-backend` | `symbolic_backend` | `backend` | `cpu` |
+| `--symbolic-backend` | `symbolic_backend` | `backend` | `auto` |
 | `--symbolic-batch-cols` | `symbolic_batch_cols` | `batch_cols` | 128，正数，作用于旧 graph GPU |
 | `--symbolic-block-size` | `symbolic_block_size` | `block_size` | 256；支持 64/128/256 |
 | `--symbolic-verify` | `symbolic_verify` | `verify` | false |
@@ -357,7 +375,7 @@ timeout 60s ./src/lu_cmd -i src/matrix/ASIC_100k_csr.mtx \
 | `--symbolic-max-pool-entries` | `symbolic_max_pool_entries` | `max_pool_entries` | 0，显存预算/索引上限 |
 
 数值 `--sf-workers` 对应 Python `sf_workers`，独立于符号 worker 配置；非零时要求
-数值 `synchronization-free` 调度。符号 worker/pool 非零时要求 `gpu-sf`。
+数值 `synchronization-free` 调度。符号 worker/pool 非零时要求 `auto` 或 `gpu-sf`。
 所有计数参数范围为 unsigned 32-bit；worker/pool 显式传 0 与默认值等价。
 校验和结构比对失败不会静默回退。GPU 提交与 CPU 重建共用派生缓存清理函数，
 包括 CSR、val、level 和 debug 缓存；严格模式失败不改变上次已提交的结果及后端标识。

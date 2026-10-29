@@ -69,6 +69,48 @@ bash src/gpu_docker.sh exec python3 src/run_batch.py \
   --update-strategy left-looking --scheduling synchronization-free --timeout 600
 ```
 
+### 在容器中通过 exec 采样数值分解计算阶段
+
+脚本默认选择主机 GPU 3，对应容器 `glu-gpu3`。在主机仓库根目录执行：
+
+```sh
+# 创建或启动单卡容器；已有容器无需重建。
+GPU_INDEX=3 bash src/gpu_docker.sh start
+
+# 重新编译阶段边界回调，再启动带采样的 LU 分解。
+GPU_INDEX=3 bash src/gpu_docker.sh exec bash -c '
+  make -C src MAIN &&
+  bash src/profile_kernel_util.sh --gpu "$GPU_INDEX" -- \
+    ./src/lu_cmd -i src/matrix/add32_csr.mtx \
+      -u left-looking -s synchronization-free
+'
+```
+
+`exec` 固定从 `/workspace` 执行，配置 SDK、GCC 和驱动的工具/库路径，
+并设置 `HT_SMI=/opt/htdriver/bin/ht-smi`，适用于已有容器。
+主机指定的 `GPU_INDEX` 会传入容器，示例中的单引号让 `$GPU_INDEX` 在容器内展开。
+采样参数 `--gpu` 使用该物理卡号；容器内计算设备通常为逻辑 0，不能因此把
+采样参数改成 `--gpu 0`。采样器仍会核对 PCI 地址，不匹配时退出。
+
+省略 `--output` 会自动创建 `util_sampling/YYYYMMDD_HHMMSS/` 目录，
+目录名使用本次启动的北京时间。容器中的
+`/workspace/util_sampling/YYYYMMDD_HHMMSS/summary.csv` 和每次数值分解阶段的原始 CSV
+会直接保存在主机仓库对应目录。需要固定名称时，在 `--gpu "$GPU_INDEX"` 后添加
+`--output util-docker-01`，该目录必须尚不存在。
+采样仅覆盖数值分解计算循环及其原有等待，汇总列为 `numeric_util_pct`，不再逐 kernel 采样。
+采样周期由 `src/kernel_util_monitor.py` 的 `INTERVAL_MS` 控制，当前为 10 ms。
+
+也可以通过标准输入执行多行 Bash 命令，例如先编译再采样：
+
+```sh
+GPU_INDEX=3 bash src/gpu_docker.sh exec bash -se <<'EOF'
+make -C src MAIN
+bash src/profile_kernel_util.sh --gpu "$GPU_INDEX" -- \
+  ./src/lu_cmd -i src/matrix/add32_csr.mtx \
+    -u left-looking -s synchronization-free
+EOF
+```
+
 退出交互 shell 用 `exit`，容器继续运行。停止及再次启动：
 
 ```sh

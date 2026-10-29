@@ -38,7 +38,18 @@ scan boundaries; subsequent CSR/value/level comparisons still use CPU methods.
 The optional `symbolic_gpu_numeric_test` target adds existing numeric integration
 checks. See [the semantic audit and Phase 1 instructions](../docs/GPU_Symbolic_Factorization_Design.md#phase-1-原型构建与验收).
 
-GPU symbolic SF is a separate opt-in backend (`--symbolic-backend gpu-sf`).
+Symbolic defaults to `--symbolic-backend auto`, selecting CPU or GPU-SF from
+post-preprocessing column pointers. Explicit `cpu`, `gpu` and `gpu-sf` override it.
+Test all four policy boundaries, fractional means, early/late long columns,
+empty input and 64-bit costs without the GPU runtime:
+
+```sh
+make -C src test-symbolic-auto DEBUG=0
+```
+
+The existing `test-symbolic-host` target also executes the production auto CPU
+dispatch, including reuse, diagnostics and inactive GPU options, without device
+initialization. GPU symbolic SF can be selected explicitly (`--symbolic-backend gpu-sf`).
 It reuses the CPU golden, packing scan and downstream numeric consumers. Run:
 
 ```sh
@@ -74,7 +85,8 @@ python3 -m unittest discover -s tests -p test_run_batch.py -v
 The host-only refinement checks cover skipping an already accurate solution,
 repeated corrections using inexact factors, absolute residual targets, iteration
 caps (including zero), stagnation, rejecting worsening/nonfinite updates,
-and extended-precision residual cancellation. Use a C++11 compiler (on the
+extended-precision residual cancellation, and retaining sub-ULP corrections in
+a `long double` solution. Use a C++11 compiler (on the
 HTHPCC host, the installed compiler is `$HOME/local/gcc-7.3.0/usr/bin/g++`):
 
 ```sh

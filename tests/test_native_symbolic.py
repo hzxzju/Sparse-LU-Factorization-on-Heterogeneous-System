@@ -22,8 +22,9 @@ class NativeParameterTests(unittest.TestCase):
 
     def test_invalid_configuration_fails_before_device_initialization(self):
         for options in (
-                dict(symbolic_backend="bad"), dict(symbolic_verify=True),
-                dict(symbolic_no_fallback=True), dict(symbolic_sf_workers=1),
+                dict(symbolic_backend="bad"), dict(symbolic_backend="cpu", symbolic_verify=True),
+                dict(symbolic_backend="cpu", symbolic_no_fallback=True),
+                dict(symbolic_backend="cpu", symbolic_sf_workers=1),
                 dict(symbolic_backend="gpu-sf", symbolic_block_size=96),
                 dict(symbolic_backend="gpu-sf", symbolic_pool_entries=2, symbolic_max_pool_entries=1),
                 dict(symbolic_batch_cols=0), dict(sf_workers=1)):
@@ -52,14 +53,17 @@ class NativeSymbolicGPUTests(unittest.TestCase):
         for col in range(4):
             for p in range(matrix[2][col], matrix[2][col + 1]):
                 rhs[matrix[1][p]] += matrix[0][p] * expected[col]
-        for backend in ("cpu", "gpu", "gpu-sf"):
+        for backend in ("auto", "cpu", "gpu", "gpu-sf"):
             with self.subTest(backend=backend):
                 factor = pyglu.splu(matrix, update_strategy="ll", scheduling="synchronization-free",
                                     sf_workers=1, symbolic_backend=backend,
                                     symbolic_verify=backend != "cpu", symbolic_no_fallback=backend != "cpu",
                                     symbolic_sf_workers=2 if backend == "gpu-sf" else 0)
-                self.assertEqual(factor.symbolic_backend, backend)
-                self.assertIn("Symbolic backend: " + backend, factor.diagnostics)
+                actual_backend = "cpu" if backend == "auto" else backend
+                self.assertEqual(factor.symbolic_backend, actual_backend)
+                self.assertIn("Symbolic backend: " + actual_backend, factor.diagnostics)
+                if backend == "auto":
+                    self.assertIn("Symbolic auto selected backend: cpu", factor.diagnostics)
                 for scale in (1., 2.):
                     np.testing.assert_allclose(factor.solve(rhs * scale), expected * scale, atol=1e-11)
                 with self.assertRaises(ValueError):

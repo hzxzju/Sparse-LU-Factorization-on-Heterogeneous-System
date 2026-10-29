@@ -250,7 +250,7 @@ PYBIND11_MODULE(_pyglu, m) {
             py::arg("scheduling") = "level",
             py::kw_only(),
             py::arg("sf_workers") = 0,
-            py::arg("symbolic_backend") = "cpu",
+            py::arg("symbolic_backend") = "auto",
             py::arg("symbolic_batch_cols") = 128,
             py::arg("symbolic_block_size") = 256,
             py::arg("symbolic_verify") = false,
@@ -270,7 +270,7 @@ PYBIND11_MODULE(_pyglu, m) {
             update_strategy : str                    — right-looking or left-looking
             scheduling : str                         -- level or synchronization-free (LL only)
             sf_workers : int                         -- numeric SF workers; 0 = automatic
-            symbolic_backend : str                   -- cpu, gpu (graph), or gpu-sf
+            symbolic_backend : str                   -- auto (default), cpu, gpu (graph), or gpu-sf
             symbolic_batch_cols : int                -- graph GPU workspace slots
             symbolic_block_size : int                -- 64, 128, or 256 threads
             symbolic_verify : bool                   -- compare all CSC arrays to CPU

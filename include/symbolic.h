@@ -5,14 +5,15 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <cstdint>
 #include "type.h"
 #include "nicslu.h"
 
-enum class SymbolicBackend { CPU, GPU, GPU_SF };
+enum class SymbolicBackend { CPU, GPU, GPU_SF, Auto };
 
 struct SymbolicConfig
 {
-    SymbolicBackend backend = SymbolicBackend::CPU;
+    SymbolicBackend backend = SymbolicBackend::Auto;
     unsigned batch_cols = 128;
     unsigned block_size = 256; // 4 native waves of 64 lanes; also supports 1/2 waves.
     bool verify = false;
@@ -24,15 +25,17 @@ struct SymbolicConfig
 
 inline SymbolicBackend ParseSymbolicBackend(const std::string &name)
 {
+    if (name == "auto") return SymbolicBackend::Auto;
     if (name == "cpu") return SymbolicBackend::CPU;
     if (name == "gpu") return SymbolicBackend::GPU;
     if (name == "gpu-sf") return SymbolicBackend::GPU_SF;
-    throw std::invalid_argument("symbolic backend must be 'cpu', 'gpu' or 'gpu-sf'");
+    throw std::invalid_argument("symbolic backend must be 'auto', 'cpu', 'gpu' or 'gpu-sf'");
 }
 
 inline const char *SymbolicBackendName(SymbolicBackend backend)
 {
     switch (backend) {
+    case SymbolicBackend::Auto: return "auto";
     case SymbolicBackend::CPU: return "cpu";
     case SymbolicBackend::GPU: return "gpu";
     case SymbolicBackend::GPU_SF: return "gpu-sf";
@@ -43,19 +46,52 @@ inline const char *SymbolicBackendName(SymbolicBackend backend)
 inline void ValidateSymbolicConfiguration(const SymbolicConfig &config)
 {
     if (config.backend != SymbolicBackend::CPU && config.backend != SymbolicBackend::GPU &&
-        config.backend != SymbolicBackend::GPU_SF)
+        config.backend != SymbolicBackend::GPU_SF && config.backend != SymbolicBackend::Auto)
         throw std::invalid_argument("Invalid symbolic backend");
     if (config.batch_cols == 0)
         throw std::invalid_argument("symbolic batch_cols must be positive");
     if (config.block_size != 64 && config.block_size != 128 && config.block_size != 256)
         throw std::invalid_argument("symbolic block_size must be 64, 128 or 256");
     if (config.backend == SymbolicBackend::CPU && (config.verify || !config.fallback_to_cpu))
-        throw std::invalid_argument("symbolic verification/no-fallback requires a GPU backend");
-    if (config.backend != SymbolicBackend::GPU_SF &&
+        throw std::invalid_argument("symbolic verification/no-fallback requires auto or a GPU backend");
+    if (config.backend != SymbolicBackend::GPU_SF && config.backend != SymbolicBackend::Auto &&
         (config.sf_workers || config.pool_entries || config.max_pool_entries))
-        throw std::invalid_argument("symbolic workers/pool options require gpu-sf");
+        throw std::invalid_argument("symbolic workers/pool options require auto or gpu-sf");
     if (config.max_pool_entries && config.pool_entries > config.max_pool_entries)
         throw std::invalid_argument("symbolic initial pool exceeds maximum pool entries");
+}
+
+struct SymbolicAutoSelection
+{
+    SymbolicBackend backend = SymbolicBackend::CPU;
+    std::uint64_t input_nnz = 0;
+    std::uint64_t max_column_nnz = 0;
+    std::uint64_t copy_lower_bound = 0;
+};
+
+// Requires validated CSC pointers and unique row indices. A column with m
+// entries has at least max(0, m-(n-j)) original predecessors. The current CPU
+// algorithm outputs at least m entries for each such predecessor's set_union.
+// Scan the actual post-preprocessing input in O(n) time and O(1) extra space.
+inline SymbolicAutoSelection SelectAutomaticSymbolicBackend(unsigned n, const unsigned *ap)
+{
+    SymbolicAutoSelection selection;
+    if (!n) return selection;
+    selection.input_nnz = ap[n];
+    for (unsigned j = 0; j < n; ++j) {
+        const std::uint64_t length = ap[j + 1] - ap[j];
+        if (length > selection.max_column_nnz) selection.max_column_nnz = length;
+        const std::uint64_t nonpredecessors = n - j;
+        const std::uint64_t predecessors = length > nonpredecessors ? length - nonpredecessors : 0;
+        selection.copy_lower_bound += length * predecessors;
+    }
+    // Integer comparisons preserve the exact density/mean thresholds, including
+    // their boundaries, without dividing by n or nnz. Legal inputs fit uint64_t.
+    if (n >= 20000 && selection.max_column_nnz * 10 >= n &&
+        selection.max_column_nnz * n >= 64 * selection.input_nnz &&
+        selection.copy_lower_bound >= UINT64_C(1000000000))
+        selection.backend = SymbolicBackend::GPU_SF;
+    return selection;
 }
 
 class Symbolic_Matrix

@@ -12,11 +12,12 @@ struct ResidualNorms {
     long double l1 = 0, l2 = 0, linf = 0;
 };
 
-// Always evaluate the original, unscaled CSR system. Extra precision is local
-// to residual evaluation; the stored factors and correction solves stay REAL.
+// Always evaluate the original, unscaled CSR system. The solution may retain
+// extended precision while residual right-hand sides and solves stay REAL.
+template <class SolutionScalar = REAL>
 inline ResidualNorms ResidualCSR(unsigned n, const double *values,
         const unsigned *columns, const unsigned *ptr,
-        const std::vector<REAL> &b, const std::vector<REAL> &x,
+        const std::vector<REAL> &b, const std::vector<SolutionScalar> &x,
         std::vector<REAL> &residual)
 {
     ResidualNorms norms;
@@ -62,10 +63,10 @@ struct RefinementResult {
 // solve(rhs) must reuse the existing factors, including their permutations and
 // scales. Keep the best finite solution; stop on stagnation or invalid arithmetic
 // rather than spending up to n iterations on a correction that cannot help.
-template <class Solve>
+template <class SolutionScalar, class Solve>
 RefinementResult RefineCSR(unsigned n, const double *values,
         const unsigned *columns, const unsigned *ptr,
-        const std::vector<REAL> &b, std::vector<REAL> &x,
+        const std::vector<REAL> &b, std::vector<SolutionScalar> &x,
         long double tolerance, unsigned max_iterations, Solve solve,
         std::ostream *progress = nullptr)
 {
@@ -82,11 +83,11 @@ RefinementResult RefineCSR(unsigned n, const double *values,
     while (result.residual.l2 > tolerance && result.iterations < max_iterations) {
         std::vector<REAL> correction = solve(residual);
         ++result.iterations;
-        std::vector<REAL> candidate(n);
+        std::vector<SolutionScalar> candidate(n);
         bool finite = correction.size() == n;
         if (finite) {
             for (unsigned i = 0; i < n; ++i) {
-                candidate[i] = x[i] + correction[i];
+                candidate[i] = x[i] + static_cast<SolutionScalar>(correction[i]);
                 finite = finite && std::isfinite(candidate[i]);
             }
         }

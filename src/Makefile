@@ -19,9 +19,9 @@ HTCC_GCC_FLAGS = -gcc-toolchain=$(GCC_TOOLCHAIN) -gcc-version=$(GCC_VERSION)
 # This SDK spells the block synchronization intrinsic __syncthreads.
 HTCC_CPPFLAGS = -D__sync_threads=__syncthreads
 LDFLAGS += -Wl,-rpath,$(GCC_TOOLCHAIN)/lib64 -Wl,-rpath,$(HPCC_PATH)/lib
-LDLIBS += -lpthread -lm -lrt
+LDLIBS += -lpthread -lm -lrt -ldl
 
-.PHONY: MAIN all clean distclean test-symbolic-gpu test-symbolic-host test-symbolic-sf-gpu test-symbolic-sf-host test-gpu-device-selection
+.PHONY: MAIN all clean distclean test-symbolic-gpu test-symbolic-host test-symbolic-auto test-symbolic-sf-gpu test-symbolic-sf-host test-gpu-device-selection
 .DELETE_ON_ERROR:
 MAIN: $(EXE)
 all: MAIN
@@ -65,6 +65,12 @@ test-symbolic-sf-gpu: symbolic_gpu_test
 test-symbolic-host: symbolic_gpu_test
 	./symbolic_gpu_test --host-only
 
+symbolic_auto_test: ../tests/symbolic_auto.cpp ../include/symbolic.h Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) ../tests/symbolic_auto.cpp -o $@
+
+test-symbolic-auto: symbolic_auto_test
+	./symbolic_auto_test
+
 symbolic_sf_host_test: symbolic.o ../tests/symbolic_sf_host.cpp symbolic_sf.cuh ../include/symbolic.h Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -pthread ../tests/symbolic_sf_host.cpp symbolic.o -o $@
 
@@ -93,7 +99,7 @@ nicslu/util/nicslu_util.a: $(wildcard nicslu/util/*.c nicslu/util/*.h nicslu/inc
 	$(MAKE) -C nicslu util
 
 clean:
-	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test
+	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test symbolic_auto_test
 	$(MAKE) -C preprocess clean
 	$(MAKE) -C nicslu/lib clean
 	$(MAKE) -C nicslu/util clean

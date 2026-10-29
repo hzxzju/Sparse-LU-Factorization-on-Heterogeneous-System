@@ -26,13 +26,13 @@ void help_message()
     cout << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
     cout << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
     cout << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
-    cout << "--symbolic-backend cpu|gpu|gpu-sf (default: cpu; GPU fill-in, CPU CSR/values/levels)" << endl;
+    cout << "--symbolic-backend auto|cpu|gpu|gpu-sf (default: auto; CPU/GPU-SF selected by input structure)" << endl;
     cout << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
-    cout << "--symbolic-sf-workers N (default: 0 = automatic; requires gpu-sf)" << endl;
-    cout << "--symbolic-pool-entries N / --symbolic-max-pool-entries N (0 = automatic; gpu-sf)" << endl;
+    cout << "--symbolic-sf-workers N (default: 0 = automatic; requires auto or gpu-sf)" << endl;
+    cout << "--symbolic-pool-entries N / --symbolic-max-pool-entries N (0 = automatic; auto or gpu-sf)" << endl;
     cout << "--symbolic-block-size 64|128|256 (default: 256)" << endl;
-    cout << "--symbolic-verify (compare GPU CSC arrays with CPU; requires a GPU backend)" << endl;
-    cout << "--symbolic-no-fallback (fail on GPU symbolic errors; requires a GPU backend)" << endl;
+    cout << "--symbolic-verify (compare GPU CSC arrays with CPU; requires auto or a GPU backend)" << endl;
+    cout << "--symbolic-no-fallback (fail on GPU symbolic errors; requires auto or a GPU backend)" << endl;
     cout << "--residual-tol T (default: 1e-6; absolute ||Ax-b||_2 target)" << endl;
     cout << "--max-refine-iters N|n (default: n = matrix order; 0 disables corrections)" << endl;
     cout << "--progress to flush stage diagnostics while running (for timeout diagnosis)" << endl;
@@ -329,7 +329,12 @@ int main(int argc, char** argv)
     vector<REAL> b(n, 1.);
     report_stage("CPU triangular solve started");
     t.start();
-    vector<REAL> x = A_sym.solve_CSR(nicslu, b);
+    // Retain corrections smaller than the spacing of the double solution.
+    vector<long double> x;
+    {
+        const vector<REAL> initial_x = A_sym.solve_CSR(nicslu, b);
+        x.assign(initial_x.begin(), initial_x.end());
+    }
     t.elapsedWallclockTime(solve_ms);
     report_stage("residual check / iterative refinement started");
     t.start();
@@ -368,14 +373,14 @@ int main(int argc, char** argv)
     // Serialization and reporting are outside T_gpu; residual evaluation is inside.
     {
         ofstream x_f("x.dat");
-        x_f << std::scientific << std::setprecision(std::numeric_limits<REAL>::max_digits10);
-        for (REAL xx: x)
+        x_f << std::scientific << std::setprecision(std::numeric_limits<long double>::max_digits10);
+        for (long double xx: x)
             x_f << xx << '\n';
     }
 
     cout << std::setprecision(std::numeric_limits<REAL>::max_digits10)
          << "Ax-b (1-norm): " << refinement.residual.l1 << '\n'
-         << "Ax-b (2-norm): " << refinement.residual.l2 << '\n'
+         << "Ax-b (2-norm): " << static_cast<double>(refinement.residual.l2) << '\n'
          << "Ax-b (infinite-norm): " << refinement.residual.linf << endl;
     if (!refinement.converged)
         cerr << "Residual L2 target not reached (" << refinement.status << ")." << endl;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Control ht-smi at intercepted launch boundaries; integrate its actual timestamps."""
+"""Sample the numeric LU compute phase; integrate actual ht-smi timestamps."""
 import argparse
 import csv
 import datetime
@@ -13,12 +13,13 @@ import sys
 import tempfile
 import time
 
-INTERVAL_NS = 100_000_000
+INTERVAL_MS = 10
+INTERVAL_NS = INTERVAL_MS * 1_000_000
 FIELDS = [
-    "pid", "launch_id", "kernel", "gpu", "bdf", "grid", "block", "shared_bytes", "stream",
-    "start_unix_ns", "end_unix_ns", "host_window_ms", "gpu_event_ms",
-    "samples_in_window", "coverage_pct", "observed_util_pct", "kernel_util_pct",
-    "status", "launch_status", "wait_status", "raw_csv",
+    "pid", "phase_id", "phase", "gpu", "bdf",
+    "start_unix_ns", "end_unix_ns", "host_window_ms",
+    "samples_in_window", "coverage_pct", "observed_util_pct", "numeric_util_pct",
+    "status", "numeric_status", "raw_csv",
 ]
 
 
@@ -61,7 +62,7 @@ def read_samples(path, gpu):
 
 
 def integrate(samples, start, end):
-    """Left hold each observation, clipped to the host window and a 200 ms age."""
+    """Left hold each observation, clipped to the phase and at most two intervals."""
     if end <= start:
         return 0, 0.0, None
     count = sum(start <= t < end for t, _, _ in samples)
@@ -100,13 +101,13 @@ class Monitor:
     def line(self, connection, buffer):
         while b"\n" not in buffer:
             if self.child.poll() is not None:
-                raise RuntimeError("target exited while a kernel was being profiled")
+                raise RuntimeError("target exited while numeric LU was being profiled")
             try:
                 data = connection.recv(4096)
             except socket.timeout:
                 continue
             if not data:
-                raise RuntimeError("target disconnected before completing its kernel")
+                raise RuntimeError("target disconnected before completing numeric LU")
             buffer += data
             if len(buffer) > 65536:
                 raise RuntimeError("oversized hook request")
@@ -116,15 +117,17 @@ class Monitor:
     def handle(self, connection):
         connection.settimeout(0.2)
         begin, buffer = self.line(connection, b"")
-        if len(begin) != 9 or begin[0] != "BEGIN":
+        if len(begin) != 5 or begin[0] != "BEGIN":
             raise RuntimeError("invalid BEGIN request")
-        _, pid, launch_id, grid, block, shared, stream, runtime_bdf, name = begin
+        _, pid, phase_id, runtime_bdf, name = begin
+        if name != "numeric_lu_compute":
+            raise RuntimeError("unsupported profiling phase")
         # Only numeric IDs can form directory names received over the socket.
-        pid, launch_id = str(int(pid)), str(int(launch_id))
-        directory = self.output / (pid + "_" + launch_id.zfill(6))
+        pid, phase_id = str(int(pid)), str(int(phase_id))
+        directory = self.output / (pid + "_" + phase_id.zfill(6))
         directory.mkdir()
         raw = directory / "tmp.csv"
-        command = [self.smi, "-l", "100", "-o", str(raw), "--show-usage"]
+        command = [self.smi, "-l", str(INTERVAL_MS), "-o", str(raw), "--show-usage"]
         with (directory / "ht-smi.log").open("w") as log:
             sampler = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
@@ -140,21 +143,21 @@ class Monitor:
                 sample_bdf = read_samples(raw, self.gpu)[-1][2]
                 if sample_bdf.lower() != runtime_bdf.lower():
                     raise RuntimeError(f"selected {self.gpu} has BDF {sample_bdf}, "
-                                       f"but kernel uses {runtime_bdf}; select the matching physical GPU")
+                                       f"but numeric LU uses {runtime_bdf}; select the matching physical GPU")
                 connection.sendall(b"O")
                 end, _ = self.line(connection, buffer)
-                if len(end) != 7 or end[0] != "END":
+                if len(end) != 5 or end[0] != "END":
                     raise RuntimeError("invalid END request")
-                _, start_ns, end_ns, duration_ns, event_ms, launch_status, wait_status = end
+                _, start_ns, end_ns, duration_ns, numeric_status = end
                 start_ns, end_ns, duration_ns = map(int, (start_ns, end_ns, duration_ns))
-                # Kernel completion was observed BEFORE stopping/waiting for ht-smi.
+                # Numeric completion was observed BEFORE stopping/waiting for ht-smi.
             finally:
                 stop_process(sampler)
 
         samples = read_samples(raw, self.gpu)
         count, coverage, observed = integrate(samples, start_ns, end_ns)
         status = []
-        if int(launch_status) or int(wait_status):
+        if int(numeric_status):
             status.append("runtime_error")
         if abs((end_ns - start_ns) - duration_ns) > 5_000_000:
             status.append("clock_jump")
@@ -166,26 +169,25 @@ class Monitor:
             status.append("single_sample_estimate")
         if coverage < 99.999:
             status.append("partial_coverage")
-        if 0 <= float(event_ms) < 100:
+        if duration_ns < INTERVAL_NS:
             status.append("below_sampling_interval")
-        valid = (count > 0 and coverage >= 99.999 and
+        valid = (observed is not None and
                  not any(s in status for s in ("runtime_error", "clock_jump", "sampler_error")))
-        row = dict(zip(FIELDS[:9], [pid, launch_id, name, self.gpu,
-                                    samples[0][2] if samples else "", grid, block, shared, stream]))
+        row = dict(pid=pid, phase_id=phase_id, phase=name, gpu=self.gpu,
+                   bdf=samples[0][2] if samples else "")
         row.update(start_unix_ns=start_ns, end_unix_ns=end_ns,
                    host_window_ms=f"{duration_ns / 1e6:.6f}",
-                   gpu_event_ms=event_ms if float(event_ms) >= 0 else "",
                    samples_in_window=count, coverage_pct=f"{coverage:.6f}",
                    observed_util_pct=f"{observed:.6f}" if observed is not None else "",
-                   kernel_util_pct=f"{observed:.6f}" if valid else "",
+                   numeric_util_pct=f"{observed:.6f}" if valid else "",
                    status=";".join(status) or "sampled_estimate",
-                   launch_status=launch_status, wait_status=wait_status,
+                   numeric_status=numeric_status,
                    raw_csv=str(raw.relative_to(self.output)))
         self.writer.writerow(row)
         self.summary.flush()
         self.completed += 1
-        print(f"[kernel-util] {pid}/{launch_id} {name}: util={row['kernel_util_pct'] or 'N/A'}% "
-              f"event={row['gpu_event_ms']} ms samples={count} coverage={coverage:.1f}% "
+        print(f"[numeric-util] {pid}/{phase_id} {name}: util={row['numeric_util_pct'] or 'N/A'}% "
+              f"window={row['host_window_ms']} ms samples={count} coverage={coverage:.1f}% "
               f"{row['status']}", file=sys.stderr, flush=True)
         connection.sendall(b"O")
 
@@ -219,9 +221,9 @@ def main():
             writer = csv.DictWriter(summary, fieldnames=FIELDS)
             writer.writeheader()
             summary.flush()
-            env = dict(os.environ, GLU_KERNEL_UTIL_SOCKET=socket_path)
+            env = dict(os.environ, GLU_NUMERIC_UTIL_SOCKET=socket_path)
             env["LD_PRELOAD"] = str(hook) + (":" + env["LD_PRELOAD"] if env.get("LD_PRELOAD") else "")
-            print("[kernel-util] output: " + str(output), file=sys.stderr, flush=True)
+            print("[numeric-util] output: " + str(output), file=sys.stderr, flush=True)
             child = subprocess.Popen(command, env=env, start_new_session=True)
             monitor = Monitor(output, gpu, args.smi, child, writer, summary)
             try:
@@ -234,7 +236,7 @@ def main():
                         monitor.handle(connection)
                 code = child.wait()
                 if not monitor.completed:
-                    print("[kernel-util] No hcLaunchKernel calls were intercepted; no kernel measurements.",
+                    print("[numeric-util] No numeric LU compute phases were reported; rebuild the solver with numeric_util.h.",
                           file=sys.stderr)
                     return code if code else 3
                 return code if code >= 0 else 128 - code
@@ -248,5 +250,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         sys.exit(130)
     except (OSError, RuntimeError, ValueError) as error:
-        print("[kernel-util] ERROR: " + str(error), file=sys.stderr)
+        print("[numeric-util] ERROR: " + str(error), file=sys.stderr)
         sys.exit(125)

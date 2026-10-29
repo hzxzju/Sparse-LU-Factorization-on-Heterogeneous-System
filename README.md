@@ -84,7 +84,7 @@ print(lu.diagnostics)      # symbolic timing, pools, parks, merges and numeric d
 
 `update_strategy` defaults to `"right-looking"`; `"left-looking"` selects the
 column-owned kernel in `src/left_looking.cuh`. The aliases `"right"`/`"rl"` and
-`"left"`/`"ll"` are accepted. Both strategies default to CPU symbolic fill-in prediction
+`"left"`/`"ll"` are accepted. Both strategies default to automatic CPU/GPU-SF symbolic selection
 and use the same diagonal perturbation rule. `scheduling="level"` remains the default;
 `scheduling="synchronization-free"` is supported only with left-looking updates.
 Left-looking collects
@@ -99,6 +99,18 @@ arguments retain their meaning. `sf_workers` controls numeric SF workers;
 to 0 for automatic selection. GPU symbolic failures fall back to CPU unless
 `symbolic_no_fallback=True`; input/verification errors always raise. See the
 [interface and default mapping](src/RUN_BATCH.md#符号分析接口一致性) for all options.
+
+`symbolic_backend="auto"` is the default in C++, the CLI/batch runner and Python.
+After preprocessing, let `m_j = ap[j+1] - ap[j]` and
+`B = sum(m_j * max(0, m_j - (n-j)))` for zero-based column `j`. Auto selects
+GPU-SF only when all four conditions hold: `n >= 20000`,
+`max(m_j) / n >= 0.10`, `max(m_j) / (nnz/n) >= 64`, and `B >= 1e9`.
+Otherwise it selects CPU. The decision takes O(n) time and O(1) extra space,
+using 64-bit integer comparisons without starting the GPU. Explicit `cpu`,
+`gpu` and `gpu-sf` override auto. Logs record the selection and its features;
+`lu.symbolic_backend` reports the actual backend, including CPU fallback.
+GPU verification, strict failure handling and SF worker/pool options apply
+only when auto selects GPU-SF. Auto selecting CPU is not a GPU fallback.
 
 The extension now compiles both `numeric.cu` and `symbolic_gpu.cu` with the same
 HTHPCC barrier alias, toolchain flags and PIC. `GCC_TOOLCHAIN`, `GCC_VERSION`,
@@ -141,9 +153,10 @@ The solver records stage timings without per-kernel profiling. Batch runs write
 `lu_cmd` and `src/run_batch.py` automatically check the absolute residual
 `||Ax-b||_2 <= 1e-6` after the initial solve. If needed, they reuse the existing
 LU factors for correction solves: `r=b-Ax`, `delta_x=solve_CSR(r)`,
-`x += delta_x`. Residuals use the original CSR matrix and CPU `long double`
-accumulation (extra precision depends on the platform); factors and solves
-remain double precision.
+`x += delta_x`. Solution updates and residual accumulation use CPU `long double`
+(extra precision depends on the platform); factors and correction solves remain
+double precision. The final L2 norm is reported as double, while `x.dat` retains
+the `long double` solution precision.
 
 ```sh
 make -C src MAIN

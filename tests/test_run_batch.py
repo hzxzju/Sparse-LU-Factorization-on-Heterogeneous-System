@@ -23,7 +23,7 @@ parser.add_argument('--sf-workers', type=int, default=0)
 parser.add_argument('--progress', action='store_true')
 parser.add_argument('--residual-tol', type=float, default=1e-6)
 parser.add_argument('--max-refine-iters', default='n')
-parser.add_argument('--symbolic-backend', choices=['cpu', 'gpu', 'gpu-sf'], default='cpu')
+parser.add_argument('--symbolic-backend', choices=['auto', 'cpu', 'gpu', 'gpu-sf'], default='auto')
 parser.add_argument('--symbolic-sf-workers', type=int, default=0)
 parser.add_argument('--symbolic-pool-entries', type=int, default=0)
 parser.add_argument('--symbolic-max-pool-entries', type=int, default=0)
@@ -106,7 +106,7 @@ class BatchTimingTests(unittest.TestCase):
         result, rows = self.run_batch(["small"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         row = rows[0]
-        self.assertEqual(row["symbolic_backend"], "cpu")
+        self.assertEqual(row["symbolic_backend"], "auto")
         self.assertEqual((row["status"], row["exit_code"]), ("ok", "0"))
         self.assertEqual((row["update_strategy"], row["scheduling"], row["perturb"]),
                          ("right-looking", "level", "0"))
@@ -156,6 +156,21 @@ class BatchTimingTests(unittest.TestCase):
         self.assertIn("symbolic=gpu-sf workers=3 pool=1 maxpool=100 threads=64 verify=True strict=True",
                       (self.output / rows[0]["log_path"]).read_text())
 
+    def test_auto_accepts_gpu_options(self):
+        result, rows = self.run_batch(["small"], "--symbolic-backend", "auto",
+            "--symbolic-sf-workers", "3", "--symbolic-pool-entries", "1",
+            "--symbolic-max-pool-entries", "100", "--symbolic-verify", "--symbolic-no-fallback")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(rows[0]["symbolic_backend"], "auto")
+        self.assertIn("symbolic=auto workers=3 pool=1 maxpool=100 threads=256 verify=True strict=True",
+                      (self.output / rows[0]["log_path"]).read_text())
+
+    def test_explicit_cpu_overrides_auto(self):
+        result, rows = self.run_batch(["small"], "--symbolic-backend", "cpu")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(rows[0]["symbolic_backend"], "cpu")
+        self.assertIn("symbolic=cpu ", (self.output / rows[0]["log_path"]).read_text())
+
     def test_graph_batch_option_reaches_solver(self):
         result, rows = self.run_batch(["small"], "--symbolic-backend", "gpu",
                                      "--symbolic-batch-cols", "7")
@@ -164,7 +179,9 @@ class BatchTimingTests(unittest.TestCase):
         self.assertIn("symbolic_batch_cols=7", (self.output / rows[0]["log_path"]).read_text())
 
     def test_invalid_symbolic_options(self):
-        for options in (("--symbolic-sf-workers", "1"), ("--symbolic-verify",),
+        for options in (("--symbolic-backend", "cpu", "--symbolic-sf-workers", "1"),
+                        ("--symbolic-backend", "cpu", "--symbolic-verify"),
+                        ("--symbolic-backend", "gpu", "--symbolic-sf-workers", "1"),
                         ("--symbolic-batch-cols", "0"), ("--symbolic-batch-cols", "4294967296"),
                         ("--symbolic-backend", "gpu-sf", "--symbolic-pool-entries", "-1"),
                         ("--symbolic-backend", "gpu-sf", "--symbolic-sf-workers", "4294967296"),

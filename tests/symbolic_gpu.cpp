@@ -192,20 +192,25 @@ void LevelSemanticsChecks()
 
 void HostChecks()
 {
-    Require(ParseSymbolicBackend("cpu") == SymbolicBackend::CPU &&
+    Require(ParseSymbolicBackend("auto") == SymbolicBackend::Auto &&
+            ParseSymbolicBackend("cpu") == SymbolicBackend::CPU &&
             ParseSymbolicBackend("gpu") == SymbolicBackend::GPU &&
             ParseSymbolicBackend("gpu-sf") == SymbolicBackend::GPU_SF, "backend parser");
-    for (SymbolicBackend backend : {SymbolicBackend::CPU, SymbolicBackend::GPU, SymbolicBackend::GPU_SF})
+    for (SymbolicBackend backend : {SymbolicBackend::Auto, SymbolicBackend::CPU,
+                                    SymbolicBackend::GPU, SymbolicBackend::GPU_SF})
         Require(ParseSymbolicBackend(SymbolicBackendName(backend)) == backend, "backend name roundtrip");
     Reject([] { SymbolicBackendName(static_cast<SymbolicBackend>(99)); });
     Reject([] { ParseSymbolicBackend("bad"); });
     SymbolicConfig config;
+    Require(config.backend == SymbolicBackend::Auto, "default symbolic backend is not auto");
     ValidateSymbolicConfiguration(config);
     config.batch_cols = 0;
     Reject([&] { ValidateSymbolicConfiguration(config); });
     config.batch_cols = 1; config.block_size = 96;
     Reject([&] { ValidateSymbolicConfiguration(config); });
     config.block_size = 256; config.verify = true;
+    ValidateSymbolicConfiguration(config); // Auto may choose a GPU backend.
+    config.backend = SymbolicBackend::CPU;
     Reject([&] { ValidateSymbolicConfiguration(config); });
     config.verify = false; config.fallback_to_cpu = false;
     Reject([&] { ValidateSymbolicConfiguration(config); });
@@ -221,7 +226,10 @@ void HostChecks()
     unsigned rows[] = {0, 0}, ptr[] = {0, 2, 2};
     Reject([&] { invalid.fill_in(rows, ptr, config); }); // duplicate
     SymbolicConfig cpu_config;
+    cpu_config.backend = SymbolicBackend::CPU;
     Reject([&] { invalid.fill_in(rows, ptr, cpu_config); }); // same configured CPU contract
+    SymbolicConfig auto_config;
+    Reject([&] { invalid.fill_in(rows, ptr, auto_config); }); // auto validates before selection
     rows[1] = 2;
     Reject([&] { invalid.fill_in(rows, ptr, config); }); // out of range
     ptr[1] = 3;
@@ -237,6 +245,9 @@ void HostChecks()
     cpu.fill_in(a.rows.data(), a.ptr.data());
     Prepare(cpu, a);
     config = SymbolicConfig();
+    // GPU-specific options are inactive when auto chooses CPU. In particular,
+    // strict GPU failure handling must not turn CPU selection into an error.
+    config.verify = true; config.fallback_to_cpu = false; config.sf_workers = 2;
     for (unsigned repeat = 0; repeat < 3; ++repeat) {
         repeated.fill_in(a.rows.data(), a.ptr.data(), config);
         Require(repeated.symbolic_backend == SymbolicBackend::CPU, "CPU backend identity");
@@ -245,6 +256,10 @@ void HostChecks()
         repeated.leveling();
         Compare(cpu, repeated);
     }
+    Require(out.str().find("Symbolic requested backend: auto") != std::string::npos &&
+            out.str().find("Symbolic auto selected backend: cpu") != std::string::npos &&
+            out.str().find("symbolic_auto_copy_lower_bound:") != std::string::npos,
+            "auto CPU diagnostics missing");
     // Empty original columns still receive one structural diagonal, zero value.
     Matrix empty{2, {}, {0, 0, 0}, {}};
     repeated.n = 2;
@@ -253,12 +268,17 @@ void HostChecks()
     Require(repeated.sym_r_idx == std::vector<unsigned>({0, 1}) &&
             repeated.val == std::vector<REAL>({0, 0}), "empty original columns");
     unsigned zero = 0;
+    Symbolic_Matrix auto_zero_order(0, out, err);
+    auto_zero_order.fill_in(nullptr, &zero, auto_config);
+    Require(auto_zero_order.symbolic_backend == SymbolicBackend::CPU &&
+            auto_zero_order.sym_c_ptr == std::vector<unsigned>({0}), "empty auto result");
     Symbolic_Matrix zero_order(0, out, err);
     zero_order.csr_r_ptr = {5}; zero_order.csr_c_idx = {5}; zero_order.csr_diag_ptr = {5};
     zero_order.val = {9}; zero_order.level_ptr = {5}; zero_order.level_idx = {5}; zero_order.num_lev = 5;
 #if GLU_DEBUG
     zero_order.CCA = {9};
 #endif
+    config = SymbolicConfig();
     config.backend = test_backend; config.verify = true;
     config.fallback_to_cpu = false;
     zero_order.fill_in(nullptr, &zero, config);
@@ -400,6 +420,31 @@ void SFResourceChecks()
     std::cout << "PASS SF pool restart, strict failure, fallback and different-pattern reuse\n";
 }
 
+void AutoGPUChecks()
+{
+    // One dense final column crosses every auto threshold. Earlier columns
+    // contain only their diagonals, so verification needs little storage.
+    const unsigned n = 40000;
+    std::vector<unsigned> rows, ptr(1, 0);
+    for (unsigned col = 0; col < n; ++col) {
+        if (col + 1 == n)
+            for (unsigned row = 0; row < n; ++row) rows.push_back(row);
+        else rows.push_back(col);
+        ptr.push_back(static_cast<unsigned>(rows.size()));
+    }
+    SymbolicConfig config;
+    config.verify = true; config.fallback_to_cpu = false; config.sf_workers = 2;
+    std::ostringstream out, err;
+    Symbolic_Matrix matrix(n, out, err);
+    matrix.fill_in(rows.data(), ptr.data(), config);
+    Require(matrix.symbolic_backend == SymbolicBackend::GPU_SF, "auto GPU backend identity");
+    Require(out.str().find("Symbolic auto selected backend: gpu-sf") != std::string::npos &&
+            out.str().find("GPU symbolic verification: passed") != std::string::npos &&
+            out.str().find("symbolic_gpu_total_ms:") != std::string::npos,
+            "auto GPU dispatch/verification diagnostics missing");
+    std::cout << "PASS auto selects GPU-SF and matches CPU structure\n";
+}
+
 void UnavailableChecks()
 {
     std::ostringstream out, err;
@@ -448,6 +493,7 @@ int main(int argc, char **argv)
             std::cout << "SKIP GPU execution: no accessible HTHPCC GPU (exit 77)\n";
             return 77;
         }
+        AutoGPUChecks();
         for (unsigned kind = 0; kind < 6; ++kind)
             PatternCase("diagonal-upper-lower-band-block-fanout", StructuredMatrix(65, kind),
                         {64u, 256u}, {1u, 2u, 128u});

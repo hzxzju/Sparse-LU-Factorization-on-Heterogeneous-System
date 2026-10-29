@@ -12,6 +12,7 @@
 # Executables built by this project (no filename extension)
 /src/lu_cmd
 /src/symbolic_gpu_test
+/src/symbolic_auto_test
 /src/symbolic_sf_host_test
 /src/symbolic_gpu_numeric_test
 /src/gpu_device_selection_test

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Profile this project's dynamically linked hcLaunchKernel calls.
+# Profile this project's numeric LU compute phase (historical script name).
 set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
@@ -7,9 +7,11 @@ if [[ ${1:-} == -h || ${1:-} == --help || $# == 0 ]]; then
     cat <<'EOF'
 Usage: bash src/profile_kernel_util.sh --gpu DEVICE [--output DIR] -- COMMAND [ARGS...]
 
+Default output: <repo>/util_sampling/YYYYMMDD_HHMMSS (Asia/Shanghai).
 DEVICE is an ht-smi physical index or PCI BDF, NOT a runtime logical index.
-Each intercepted hcLaunchKernel starts ht-smi -l 100 -o .../tmp.csv --show-usage.
-Kernels are synchronized and serialized for attribution. This changes timing.
+Each numeric LU compute phase starts ht-smi -l 10 -o .../tmp.csv --show-usage.
+Rebuild the solver first: make -C src MAIN
+Sampling covers the compute loop and existing waits, without serializing kernels.
 Requires Python 3, a C++ compiler, HPCC headers and ht-smi.
 See docs/Kernel_Util_Profiling.md for measurement limits and output columns.
 
@@ -42,11 +44,11 @@ command -v "$CXX" >/dev/null
 command -v python3 >/dev/null
 command -v "${HT_SMI:-ht-smi}" >/dev/null
 if [[ -z $output ]]; then
-    output=$(mktemp -d "$PWD/kernel-util.XXXXXX")
-else
-    # Refuse reuse: every run owns its files, including interrupted runs.
-    mkdir -- "$output"
+    mkdir -p -- "$script_dir/../util_sampling"
+    output="$script_dir/../util_sampling/$(TZ=Asia/Shanghai date +%Y%m%d_%H%M%S)"
 fi
+# Refuse reuse: every run owns its files, including interrupted runs.
+mkdir -- "$output"
 output=$(cd -- "$output" && pwd)
 compiler_lib=$(cd -- "$(dirname -- "$(command -v "$CXX")")/../lib64" 2>/dev/null && pwd || true)
 export LD_LIBRARY_PATH="$HPCC_PATH/lib${compiler_lib:+:$compiler_lib}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

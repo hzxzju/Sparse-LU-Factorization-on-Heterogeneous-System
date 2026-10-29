@@ -66,6 +66,30 @@ int main()
         auto norms = ResidualCSR(3, cancel_values, cancel_columns, cancel_ptr,
                                 {1, 0, 0}, {1, 1, 1}, r);
         check(norms.l2 == 0, "residual must accumulate in extended precision");
+
+        // A correction smaller than half a double ULP is lost on assignment.
+        // Large opposing coefficients expose that loss in the absolute residual.
+        const double scaled_values[] = {1e12, -1e12, 1};
+        const unsigned scaled_columns[] = {0, 1, 1}, scaled_ptr[] = {0, 2, 3};
+        auto scaled_solve = [](const std::vector<REAL> &rhs) {
+            return std::vector<REAL>{rhs[0] / 1e12 + rhs[1], rhs[1]};
+        };
+        std::vector<REAL> rounded_x = {1 + 1e-12, 1};
+        auto rounded_result = RefineCSR(2, scaled_values, scaled_columns, scaled_ptr,
+                                       b, rounded_x, 1e-6, 2, scaled_solve);
+        check(!rounded_result.converged &&
+              std::string(rounded_result.status) == "stagnated",
+              "double solution must expose the sub-ULP correction plateau");
+        std::vector<long double> precise_x(rounded_x.begin(), rounded_x.end());
+        auto precise_result = RefineCSR(2, scaled_values, scaled_columns, scaled_ptr,
+                                       b, precise_x, 1e-6, 2, scaled_solve);
+        check(precise_result.converged && precise_result.iterations == 1 &&
+              precise_x[0] != static_cast<long double>(rounded_x[0]),
+              "extended-precision updates must retain sub-ULP corrections");
+        rounded_x.assign(precise_x.begin(), precise_x.end());
+        norms = ResidualCSR(2, scaled_values, scaled_columns, scaled_ptr, b, rounded_x, r);
+        check(norms.l2 > 1e-6,
+              "rounding the solution back to double loses the residual improvement");
     }
     std::cout << "refinement checks passed\n";
 }

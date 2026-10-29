@@ -17,17 +17,18 @@ spec.loader.exec_module(monitor)
 
 class WeightingTests(unittest.TestCase):
     def test_irregular_intervals_and_clipped_boundaries(self):
-        # Window [50,250) ms: 20% for 50ms, then 80% for 150ms -> 65%.
+        # Scale to the configured interval: 20% for half, then 80% for 1.5 intervals.
+        interval = monitor.INTERVAL_NS
         count, coverage, util = monitor.integrate(
-            [(0, 20, ""), (100_000_000, 80, ""), (300_000_000, 0, "")],
-            50_000_000, 250_000_000)
+            [(0, 20, ""), (interval, 80, ""), (3 * interval, 0, "")],
+            interval // 2, 5 * interval // 2)
         self.assertEqual(count, 1)
         self.assertEqual(coverage, 100)
         self.assertEqual(util, 65)
 
     def test_long_sampling_gap_is_uncovered(self):
         _, coverage, util = monitor.integrate([(0, 80, "")], 0, 1_000_000_000)
-        self.assertEqual(coverage, 20)
+        self.assertAlmostEqual(coverage, 2 * monitor.INTERVAL_NS / 1_000_000_000 * 100)
         self.assertEqual(util, 80)
 
     def test_no_sample_and_zero_duration(self):
@@ -58,54 +59,80 @@ class WeightingTests(unittest.TestCase):
 
 FAKE_RUNTIME = r'''
 #include <hc_runtime_api.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <thread>
 using Clock = std::chrono::steady_clock;
-static Clock::time_point cursor = Clock::now();
-struct FakeEvent { Clock::time_point time; };
+static Clock::time_point cursors[2] = {Clock::now(), Clock::now()};
+static int sync_calls = 0;
+extern "C" int fake_sync_calls() { return sync_calls; }
 extern "C" hcError_t hcDeviceSynchronize() {
-    std::this_thread::sleep_until(cursor); cursor = Clock::now(); return hcSuccess;
+    ++sync_calls;
+    std::this_thread::sleep_until(std::max(cursors[0], cursors[1]));
+    return hcSuccess;
 }
 extern "C" hcError_t hcGetDevice(int *d) { *d=0; return hcSuccess; }
 extern "C" hcError_t hcDeviceGetPCIBusId(char *p, int n, int) {
     std::snprintf(p,n,"0000:d6:00.0"); return hcSuccess;
 }
-extern "C" hcError_t hcEventCreate(hcEvent_t *e) {
-    *e=reinterpret_cast<hcEvent_t>(new FakeEvent); return hcSuccess;
-}
-extern "C" hcError_t hcEventDestroy(hcEvent_t e) {
-    delete reinterpret_cast<FakeEvent*>(e); return hcSuccess;
-}
-extern "C" hcError_t hcEventRecord(hcEvent_t e, hcStream_t) {
-    if (cursor < Clock::now()) cursor = Clock::now();
-    reinterpret_cast<FakeEvent*>(e)->time=cursor; return hcSuccess;
-}
-extern "C" hcError_t hcEventSynchronize(hcEvent_t e) {
-    std::this_thread::sleep_until(reinterpret_cast<FakeEvent*>(e)->time); return hcSuccess;
-}
-extern "C" hcError_t hcEventElapsedTime(float *m, hcEvent_t a, hcEvent_t b) {
-    *m=std::chrono::duration<float,std::milli>(reinterpret_cast<FakeEvent*>(b)->time -
-         reinterpret_cast<FakeEvent*>(a)->time).count(); return hcSuccess;
-}
-extern "C" hcError_t hcLaunchKernel(const void *f, dim3, dim3, void **, size_t, hcStream_t) {
+extern "C" hcError_t hcLaunchKernel(const void *f, dim3, dim3, void **, size_t, hcStream_t stream) {
     if (reinterpret_cast<size_t>(f)==3) return static_cast<hcError_t>(7);
-    cursor=Clock::now()+std::chrono::milliseconds(reinterpret_cast<size_t>(f)==1 ? 350 : 1);
-    return hcSuccess; // Deliberately asynchronous: the event wait must complete it.
+    auto &cursor = cursors[stream ? 1 : 0];
+    cursor=std::max(Clock::now(), cursor)+std::chrono::milliseconds(
+        reinterpret_cast<size_t>(f)==1 ? 350 : 200);
+    return hcSuccess; // Deliberately asynchronous; the target owns its waits.
 }
 '''
 
 FAKE_TARGET = r'''
 #include <hc_runtime_api.h>
-int main() {
-    if (hcLaunchKernel(reinterpret_cast<void*>(1), dim3(2), dim3(64), nullptr, 0, nullptr)) return 10;
-    if (hcLaunchKernel(reinterpret_cast<void*>(2), dim3(1), dim3(64), nullptr, 0, nullptr)) return 11;
-    return static_cast<int>(hcLaunchKernel(reinterpret_cast<void*>(3), dim3(1), dim3(64), nullptr, 0, nullptr));
+#include "numeric_util.h"
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <thread>
+extern "C" int fake_sync_calls();
+int main(int argc, char **argv) {
+    // Symbolic/setup work must not create its own measurement.
+    hcLaunchKernel(reinterpret_cast<void*>(2), dim3(1), dim3(64), nullptr, 0, nullptr);
+    hcDeviceSynchronize();
+    if (argc > 1 && std::strcmp(argv[1], "no-phase") == 0) return 0;
+    NumericUtilScope phase;
+    phase.start(0);
+    if (argc > 1 && std::strcmp(argv[1], "abort") == 0) return 9;
+    auto start=std::chrono::steady_clock::now();
+    hcLaunchKernel(reinterpret_cast<void*>(1), dim3(2), dim3(64), nullptr, 0, nullptr);
+    hcLaunchKernel(reinterpret_cast<void*>(2), dim3(1), dim3(64), nullptr, 0,
+                   reinterpret_cast<hcStream_t>(1));
+    // An added per-launch wait would block for at least 350 ms.
+    if (std::chrono::steady_clock::now()-start > std::chrono::milliseconds(200)) return 90;
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    hcDeviceSynchronize();
+    // Host-side work between kernels/barriers is part of the phase.
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    double measured=std::chrono::duration<double,std::milli>(
+        std::chrono::steady_clock::now()-start).count();
+    phase.finish();
+    std::printf("compute_ms=%.6f\n", measured);
+    if (fake_sync_calls() != 2) return 91;
+    // Download/cleanup work must be outside the phase.
+    hcLaunchKernel(reinterpret_cast<void*>(2), dim3(1), dim3(64), nullptr, 0, nullptr);
+    hcDeviceSynchronize();
+    NumericUtilScope short_phase;
+    short_phase.start(0);
+    short_phase.finish();
+    NumericUtilScope failed_phase;
+    failed_phase.start(0);
+    int status=static_cast<int>(hcLaunchKernel(reinterpret_cast<void*>(3), dim3(1),
+                                             dim3(64), nullptr, 0, nullptr));
+    failed_phase.finish(status);
+    return status;
 }
 '''
 
 FAKE_SMI = r'''#!/usr/bin/env python3
-import csv, datetime, signal, sys, time
+import csv, datetime, os, signal, sys, time
 running=True
 def stop(*args):
     global running
@@ -122,7 +149,8 @@ with open(sys.argv[sys.argv.index('-o')+1],'w',newline='') as f:
         w.writerow([stamp,'GPU#3','-','0000:d6:00.0',20 if i%2==0 else 80])
         f.flush()
         i+=1
-        time.sleep(.1)
+        interval_ms = os.environ.get('FAKE_SMI_INTERVAL_MS', sys.argv[sys.argv.index('-l')+1])
+        time.sleep(float(interval_ms)/1000)
 '''
 
 
@@ -146,11 +174,11 @@ class IntegrationTests(unittest.TestCase):
         lib = str(Path(cls.compiler).resolve().parent.parent / "lib64")
         cls.env["LD_LIBRARY_PATH"] = lib + ":" + cls.env.get("LD_LIBRARY_PATH", "")
         common = [cls.compiler, "-std=c++11", "-pthread", "-I" + str(cls.hpcc / "include"),
-                  "-I" + str(cls.hpcc / "include/hcr")]
+                  "-I" + str(cls.hpcc / "include/hcr"), "-I" + str(ROOT / "include")]
         for command in [common + ["-shared", "-fPIC", str(cls.directory / "runtime.cpp"),
                                    "-o", str(cls.directory / "libfake.so")],
                         common + [str(cls.directory / "target.cpp"), "-L" + str(cls.directory),
-                                  "-lfake", "-Wl,-rpath," + str(cls.directory),
+                                  "-lfake", "-ldl", "-Wl,-rpath," + str(cls.directory),
                                   "-o", str(cls.directory / "target")]]:
             subprocess.run(command, env=cls.env, check=True, capture_output=True, text=True)
 
@@ -158,40 +186,74 @@ class IntegrationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def run_profile(self, gpu, name, target=None):
+    def run_profile(self, gpu, name, target=None, target_args=(), smi_interval_ms=None):
         output = self.directory / name
+        env = dict(self.env)
+        if smi_interval_ms is not None:
+            env["FAKE_SMI_INTERVAL_MS"] = str(smi_interval_ms)
         result = subprocess.run(["bash", str(ROOT / "src/profile_kernel_util.sh"),
                                  "--gpu", gpu, "--output", str(output), "--",
-                                 target or str(self.directory / "target")],
-                                env=self.env, capture_output=True, text=True, timeout=20)
+                                 target or str(self.directory / "target"), *target_args],
+                                env=env, capture_output=True, text=True, timeout=20)
         with (output / "summary.csv").open() as file:
             rows = list(csv.DictReader(file))
         return result, rows
 
-    def test_async_completion_weighting_short_kernel_and_error_exit(self):
+    def test_entire_numeric_phase_preserves_async_launches_and_existing_waits(self):
         result, rows = self.run_profile("3", "good")
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(len(rows), 3, result.stderr)
         first = rows[0]
-        self.assertGreaterEqual(float(first["host_window_ms"]), 350)
+        self.assertEqual(first["phase"], "numeric_lu_compute")
+        self.assertGreaterEqual(float(first["host_window_ms"]), 375)
+        measured = float(result.stdout.split("compute_ms=")[1].split()[0])
+        self.assertAlmostEqual(float(first["host_window_ms"]), measured, delta=10)
         self.assertGreaterEqual(int(first["samples_in_window"]), 2)
-        self.assertEqual(first["coverage_pct"], "100.000000")
-        self.assertTrue(20 <= float(first["kernel_util_pct"]) <= 80)
-        self.assertAlmostEqual(float(first["gpu_event_ms"]), 350, delta=2)
+        self.assertTrue(20 <= float(first["observed_util_pct"]) <= 80)
+        self.assertEqual(first["numeric_util_pct"], first["observed_util_pct"])
+        self.assertTrue(20 <= float(first["numeric_util_pct"]) <= 80)
         self.assertIn("below_sampling_interval", rows[1]["status"])
-        if rows[1]["samples_in_window"] == "0":
-            self.assertEqual(rows[1]["kernel_util_pct"], "")
+        self.assertEqual(rows[1]["numeric_util_pct"], rows[1]["observed_util_pct"])
         self.assertIn("runtime_error", rows[2]["status"])
-        self.assertEqual(rows[2]["kernel_util_pct"], "")
+        self.assertEqual(rows[2]["numeric_status"], "7")
+        self.assertEqual(rows[2]["numeric_util_pct"], "")
         self.assertTrue(all((self.directory / "good" / row["raw_csv"]).is_file() for row in rows))
+        self.assertEqual(len(list((self.directory / "good").glob("*/tmp.csv"))), 3)
+
+    def test_partial_coverage_still_outputs_numeric_utilization(self):
+        result, rows = self.run_profile("3", "partial", smi_interval_ms=50)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        first = rows[0]
+        self.assertIn("partial_coverage", first["status"])
+        self.assertLess(float(first["coverage_pct"]), 100)
+        self.assertTrue(20 <= float(first["numeric_util_pct"]) <= 80)
+        self.assertEqual(first["numeric_util_pct"], first["observed_util_pct"])
+
+    def test_early_return_reports_failed_phase(self):
+        result, rows = self.run_profile("3", "abort", target_args=("abort",))
+        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertEqual(len(rows), 1, result.stderr)
+        self.assertIn("runtime_error", rows[0]["status"])
+        self.assertEqual(rows[0]["numeric_util_pct"], "")
+
+    def test_target_runs_without_profiler(self):
+        result = subprocess.run([str(self.directory / "target")], env=self.env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 7, result.stderr)
+
+    def test_kernel_launches_outside_numeric_phase_are_not_profiled(self):
+        result, rows = self.run_profile("3", "outside", target_args=("no-phase",))
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(rows, [])
+        self.assertIn("No numeric LU compute phases", result.stderr)
 
     def test_wrong_physical_gpu_is_rejected(self):
         result, rows = self.run_profile("0", "wrong-gpu")
         self.assertEqual(result.returncode, 125, result.stderr)
-        self.assertIn("kernel uses 0000:d6:00.0", result.stderr)
+        self.assertIn("numeric LU uses 0000:d6:00.0", result.stderr)
         self.assertEqual(rows, [])
 
-    def test_zero_launch_is_explicit(self):
+    def test_missing_phase_markers_is_explicit(self):
         result, rows = self.run_profile("3", "no-launch", "/bin/true")
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertEqual(rows, [])

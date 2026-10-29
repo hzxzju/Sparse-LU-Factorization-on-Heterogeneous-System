@@ -73,8 +73,8 @@ def main():
                         help="maximum correction solves; n = matrix order (default), 0 disables corrections")
     parser.add_argument("--timeout", type=float, default=0,
                         help="maximum seconds per matrix; 0 disables timeout")
-    parser.add_argument("--symbolic-backend", choices=["cpu", "gpu", "gpu-sf"], default="cpu",
-                        help="symbolic factorization backend (default: cpu)")
+    parser.add_argument("--symbolic-backend", choices=["auto", "cpu", "gpu", "gpu-sf"], default="auto",
+                        help="symbolic factorization backend (default: auto selects CPU/GPU-SF by input structure)")
     parser.add_argument("--symbolic-sf-workers", type=int, default=0,
                         help="symbolic SF workers, independent of numeric --sf-workers")
     parser.add_argument("--symbolic-batch-cols", type=int, default=128,
@@ -90,13 +90,13 @@ def main():
     for name in ("symbolic_sf_workers", "symbolic_pool_entries", "symbolic_max_pool_entries"):
         if not 0 <= getattr(args, name) <= 4294967295:
             parser.error("--{} must be between 0 and 4294967295".format(name.replace("_", "-")))
-    if args.symbolic_backend != "gpu-sf" and any((args.symbolic_sf_workers,
+    if args.symbolic_backend not in ("auto", "gpu-sf") and any((args.symbolic_sf_workers,
             args.symbolic_pool_entries, args.symbolic_max_pool_entries)):
-        parser.error("symbolic workers/pool options require --symbolic-backend gpu-sf")
+        parser.error("symbolic workers/pool options require --symbolic-backend auto or gpu-sf")
     if args.symbolic_max_pool_entries and args.symbolic_pool_entries > args.symbolic_max_pool_entries:
         parser.error("initial symbolic pool exceeds maximum pool entries")
     if args.symbolic_backend == "cpu" and (args.symbolic_verify or args.symbolic_no_fallback):
-        parser.error("symbolic verification/no-fallback requires a GPU backend")
+        parser.error("symbolic verification/no-fallback requires auto or a GPU backend")
     if not math.isfinite(args.residual_tol) or args.residual_tol <= 0:
         parser.error("--residual-tol must be finite and positive")
     if args.max_refine_iters != "n":

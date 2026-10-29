@@ -148,7 +148,7 @@ glu_ext = Extension(
     depends=["src/" + name for name in
              ("numeric.cu", "symbolic_gpu.cu", "symbolic_sf.cuh", "symbolic.cc",
               "left_looking.cuh", "left_looking_sf.cuh", "sf_sync.cuh")]
-            + ["include/numeric.h", "include/symbolic.h", "include/gpu_device.h"],
+            + ["include/numeric.h", "include/numeric_util.h", "include/symbolic.h", "include/gpu_device.h"],
     include_dirs=[
         str(INCLUDE),
         str(NICSLU / "include"),
@@ -157,7 +157,7 @@ glu_ext = Extension(
         pybind11.get_include(),
     ],
     # CUDA include/library paths and cudart linkage removed for the HTHPCC path.
-    libraries=["m", "rt", "pthread"],
+    libraries=["m", "rt", "pthread", "dl"],
     runtime_library_dirs=[str(Path(GCC_TOOLCHAIN) / "lib64"), str(Path(HPCC_PATH) / "lib")],
     extra_compile_args=["-O3", "-std=c++11", "-Wall", "-fPIC"],
     language="c++",

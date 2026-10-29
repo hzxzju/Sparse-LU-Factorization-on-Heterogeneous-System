@@ -682,18 +682,32 @@ void Symbolic_Matrix::fill_in(unsigned *ai, unsigned *ap, const SymbolicConfig &
     // All configured backends share the canonical CSC contract. Keep the
     // historical two-argument CPU entry point available as the golden path.
     ValidateInput(n, ai, ap);
-    if (config.backend == SymbolicBackend::CPU) {
+    SymbolicBackend backend = config.backend;
+    if (backend == SymbolicBackend::Auto) {
+        const auto auto_start = WallClock::now();
+        const SymbolicAutoSelection selection = SelectAutomaticSymbolicBackend(n, ap);
+        const double auto_ms = Milliseconds(auto_start);
+        backend = selection.backend;
+        m_out << "Symbolic requested backend: auto\n"
+              << "symbolic_auto_input_nnz: " << selection.input_nnz << '\n'
+              << "symbolic_auto_max_column_nnz: " << selection.max_column_nnz << '\n'
+              << "symbolic_auto_copy_lower_bound: " << selection.copy_lower_bound << '\n'
+              << "symbolic_auto_ms: " << auto_ms << '\n'
+              << "Symbolic auto selected backend: " << SymbolicBackendName(backend) << std::endl;
+    }
+    if (backend == SymbolicBackend::CPU) {
         m_out << "Symbolic backend: cpu" << std::endl;
         const auto start = WallClock::now();
         fill_in(ai, ap);
         m_out << "symbolic_cpu_ms: " << Milliseconds(start) << std::endl;
         return;
     }
-    m_out << "Symbolic requested backend: " << SymbolicBackendName(config.backend) << std::endl;
+    if (config.backend != SymbolicBackend::Auto)
+        m_out << "Symbolic requested backend: " << SymbolicBackendName(backend) << std::endl;
     double verification_ms = 0;
     HostPattern pattern;
     try {
-        pattern = config.backend == SymbolicBackend::GPU_SF ?
+        pattern = backend == SymbolicBackend::GPU_SF ?
             BuildSFPattern(n, ai, ap, config, gpu_device, m_out) :
             BuildPattern(n, ai, ap, config, gpu_device, m_out);
     } catch (const std::overflow_error &) {
@@ -729,12 +743,12 @@ void Symbolic_Matrix::fill_in(unsigned *ai, unsigned *ap, const SymbolicConfig &
     sym_r_idx.swap(pattern.rows);
     l_col_ptr.swap(pattern.diagonal);
     gpu_device = pattern.device;
-    symbolic_backend = config.backend;
+    symbolic_backend = backend;
     nnz = sym_c_ptr.back();
     reset_derived_structure();
     m_out << "Symbolic backend: " << SymbolicBackendName(symbolic_backend)
           << " (fill-in; CSR/values/levels on CPU)\n"
           << "Symbolic nonzero: " << nnz << std::endl;
-    if (config.backend == SymbolicBackend::GPU_SF)
+    if (backend == SymbolicBackend::GPU_SF)
         m_out << "symbolic_gpu_total_ms: " << Milliseconds(symbolic_start) - verification_ms << std::endl;
 }

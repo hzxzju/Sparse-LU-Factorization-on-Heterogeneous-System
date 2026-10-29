@@ -2,6 +2,7 @@
 #include "Timer.h"
 #include <iostream>
 #include "numeric.h"
+#include "numeric_util.h"
 #include "gpu_device.h"
 #include "left_looking.cuh"
 #include "left_looking_sf.cuh"
@@ -454,6 +455,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     constexpr int Nstreams = 16;
     hcStream_t streams[Nstreams];
     bool stream_created[Nstreams] = {false};
+    NumericUtilScope numeric_util;
 
     auto cleanup = [&]() {
         for (int j = 0; j < Nstreams; ++j) {
@@ -491,6 +493,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
 #define HC_RETURN_ON_ERR(call, op_name) \
     do { \
         if (!hcCheck((call), (op_name))) { \
+            numeric_util.finish(1); \
             cleanup(); \
             return; \
         } \
@@ -681,6 +684,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     };
 
     Timer numeric_timer;
+    numeric_util.start(dev);
     numeric_timer.start();
 
     if (sync_free) {
@@ -802,6 +806,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     // but excludes allocation, initialization and host/device transfers.
     double numeric_compute_ms = 0.;
     numeric_timer.elapsedWallclockTime(numeric_compute_ms);
+    numeric_util.finish();
 
     HC_RETURN_ON_ERR(hcMemcpy(&(A_sym.val[0]), val_dev, nnz * sizeof(REAL), hcMemcpyDeviceToHost),
         "hcMemcpy(A_sym.val)");

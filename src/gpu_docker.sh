@@ -11,8 +11,35 @@ esac
 container="glu-gpu${gpu_index}"
 render="/dev/dri/renderD$((128 + gpu_index))"
 docker_cmd=(docker --context "${GLU_DOCKER_CONTEXT:-rootless}")
+# Apply this environment on every exec, including already-created containers.
+docker_exec=("${docker_cmd[@]}" exec --workdir /workspace
+    --env "GPU_INDEX=$gpu_index" --env "HT_SMI=${HT_SMI:-/opt/htdriver/bin/ht-smi}")
+container_cmd=("$container" bash -c '
+set -euo pipefail
+export HPCC_PATH=${HPCC_PATH:-/opt/hpcc}
+export PATH="${GCC_TOOLCHAIN:+$GCC_TOOLCHAIN/bin:}$HPCC_PATH/bin:$HPCC_PATH/htgpu_llvm/bin:/opt/htdriver/bin:$PATH"
+export LD_LIBRARY_PATH="${GCC_TOOLCHAIN:+$GCC_TOOLCHAIN/lib64:}$HPCC_PATH/lib:/opt/htdriver/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$@"
+' gpu-docker)
 action=${1:-shell}
 if (($#)); then shift; fi
+
+usage() {
+    cat <<'EOF'
+Usage: bash src/gpu_docker.sh {start|shell|exec COMMAND [ARGS...]|probe|status|stop}
+
+GPU_INDEX selects the host GPU and container (default: 3), and is exported inside.
+Commands run in /workspace with the SDK, GCC and ht-smi environment configured.
+Use exec bash -c 'COMMAND ...' for shell syntax, or exec bash with stdin for a script.
+HT_SMI may override the ht-smi executable path inside the container.
+
+Examples (run from the host repository root):
+  GPU_INDEX=3 bash src/gpu_docker.sh start
+  GPU_INDEX=3 bash src/gpu_docker.sh exec bash -c 'bash src/profile_kernel_util.sh --gpu "$GPU_INDEX" -- ./src/lu_cmd -i src/matrix/add32_csr.mtx -u left-looking -s synchronization-free'
+
+Profiling output is saved under /workspace and is also visible in the host repository.
+EOF
+}
 
 verify_container() {
     # Refuse to reuse a same-named container with different devices/workspace.
@@ -54,18 +81,18 @@ case "$action" in
         ;;
     shell)
         verify_container
-        exec "${docker_cmd[@]}" exec -it "$container" bash
+        exec "${docker_exec[@]}" -it "${container_cmd[@]}" bash
         ;;
     exec)
         if (($# == 0)); then echo 'exec requires a command' >&2; exit 2; fi
         verify_container
-        exec "${docker_cmd[@]}" exec "$container" "$@"
+        exec "${docker_exec[@]}" -i "${container_cmd[@]}" "$@"
         ;;
     probe)
         verify_container
-        "${docker_cmd[@]}" exec "$container" make -C src gpu_device_probe
-        "${docker_cmd[@]}" exec "$container" timeout -k 3s 20s ./src/gpu_device_probe --count
-        exec "${docker_cmd[@]}" exec "$container" timeout -k 3s 30s ./src/gpu_device_probe
+        "${docker_exec[@]}" "${container_cmd[@]}" make -C src gpu_device_probe
+        "${docker_exec[@]}" "${container_cmd[@]}" timeout -k 3s 20s ./src/gpu_device_probe --count
+        exec "${docker_exec[@]}" "${container_cmd[@]}" timeout -k 3s 30s ./src/gpu_device_probe
         ;;
     status)
         verify_container
@@ -75,8 +102,11 @@ case "$action" in
         verify_container
         "${docker_cmd[@]}" stop "$container"
         ;;
+    -h|--help|help)
+        usage
+        ;;
     *)
-        echo 'Usage: bash src/gpu_docker.sh {start|shell|exec COMMAND...|probe|status|stop}' >&2
+        usage >&2
         exit 2
         ;;
 esac
