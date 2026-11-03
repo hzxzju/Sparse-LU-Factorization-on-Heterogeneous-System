@@ -1,0 +1,285 @@
+{
+  "smi_clock": "CLOCK_REALTIME/local timezone",
+  "smi_interval_ms": 1,
+  "trace_time_unit": "ns",
+  "run": {
+    "start_realtime_ns": 1793685442151872929,
+    "sampler_ready_realtime_ns": 1793685442175206623,
+    "first_smi_timestamp_ns": 1793685442163857000,
+    "end_realtime_ns": 1793685484362268654,
+    "last_smi_timestamp_ns": 1793685484358848000,
+    "realtime_minus_monotonic_elapsed_ns": 1741,
+    "host_timezone": [
+      "CST",
+      "CST"
+    ],
+    "tolerance_ns": 1000000
+  },
+  "phases": [
+    {
+      "pid": "1337",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 11601,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1337:1:begin",
+          "trace_ns": 1793685447536361838,
+          "realtime_before_ns": 1793685447536344817,
+          "realtime_after_ns": 1793685447536385020
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1337:1:end",
+          "trace_ns": 1793685447726533451,
+          "realtime_before_ns": 1793685447726523681,
+          "realtime_after_ns": 1793685447726545052
+        }
+      ]
+    },
+    {
+      "pid": "1358",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 12811,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1358:1:begin",
+          "trace_ns": 1793685451056452175,
+          "realtime_before_ns": 1793685451056437154,
+          "realtime_after_ns": 1793685451056470156
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1358:1:end",
+          "trace_ns": 1793685451119799016,
+          "realtime_before_ns": 1793685451119788805,
+          "realtime_after_ns": 1793685451119811827
+        }
+      ]
+    },
+    {
+      "pid": "1379",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 14501,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1379:1:begin",
+          "trace_ns": 1793685454950539060,
+          "realtime_before_ns": 1793685454950522689,
+          "realtime_after_ns": 1793685454950564662
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1379:1:end",
+          "trace_ns": 1793685455104697387,
+          "realtime_before_ns": 1793685455104687056,
+          "realtime_after_ns": 1793685455104711888
+        }
+      ]
+    },
+    {
+      "pid": "1400",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 10030,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1400:1:begin",
+          "trace_ns": 1793685457757194102,
+          "realtime_before_ns": 1793685457757180241,
+          "realtime_after_ns": 1793685457757215173
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1400:1:end",
+          "trace_ns": 1793685457779043651,
+          "realtime_before_ns": 1793685457779036540,
+          "realtime_after_ns": 1793685457779053681
+        }
+      ]
+    },
+    {
+      "pid": "1421",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 7571,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1421:1:begin",
+          "trace_ns": 1793685459247186666,
+          "realtime_before_ns": 1793685459247168285,
+          "realtime_after_ns": 1793685459247210348
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1421:1:end",
+          "trace_ns": 1793685459248265072,
+          "realtime_before_ns": 1793685459248260582,
+          "realtime_after_ns": 1793685459248272643
+        }
+      ]
+    },
+    {
+      "pid": "1442",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 10421,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1442:1:begin",
+          "trace_ns": 1793685460844540692,
+          "realtime_before_ns": 1793685460844523271,
+          "realtime_after_ns": 1793685460844560333
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1442:1:end",
+          "trace_ns": 1793685460861502216,
+          "realtime_before_ns": 1793685460861494766,
+          "realtime_after_ns": 1793685460861512637
+        }
+      ]
+    },
+    {
+      "pid": "1463",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 11390,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1463:1:begin",
+          "trace_ns": 1793685462344336027,
+          "realtime_before_ns": 1793685462344322036,
+          "realtime_after_ns": 1793685462344358768
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1463:1:end",
+          "trace_ns": 1793685462351039689,
+          "realtime_before_ns": 1793685462351031678,
+          "realtime_after_ns": 1793685462351051079
+        }
+      ]
+    },
+    {
+      "pid": "1484",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 16471,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1484:1:begin",
+          "trace_ns": 1793685466196105852,
+          "realtime_before_ns": 1793685466196089021,
+          "realtime_after_ns": 1793685466196128293
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1484:1:end",
+          "trace_ns": 1793685466294636331,
+          "realtime_before_ns": 1793685466294622510,
+          "realtime_after_ns": 1793685466294652802
+        }
+      ]
+    },
+    {
+      "pid": "1505",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 9420,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1505:1:begin",
+          "trace_ns": 1793685467806809287,
+          "realtime_before_ns": 1793685467806793716,
+          "realtime_after_ns": 1793685467806831329
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1505:1:end",
+          "trace_ns": 1793685467815631339,
+          "realtime_before_ns": 1793685467815623878,
+          "realtime_after_ns": 1793685467815640759
+        }
+      ]
+    },
+    {
+      "pid": "1526",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 12401,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1526:1:begin",
+          "trace_ns": 1793685469233628063,
+          "realtime_before_ns": 1793685469233613162,
+          "realtime_after_ns": 1793685469233648044
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1526:1:end",
+          "trace_ns": 1793685469245234390,
+          "realtime_before_ns": 1793685469245227650,
+          "realtime_after_ns": 1793685469245246791
+        }
+      ]
+    },
+    {
+      "pid": "1547",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 7151,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1547:1:begin",
+          "trace_ns": 1793685470610194369,
+          "realtime_before_ns": 1793685470610181558,
+          "realtime_after_ns": 1793685470610211160
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1547:1:end",
+          "trace_ns": 1793685470615648293,
+          "realtime_before_ns": 1793685470615644163,
+          "realtime_after_ns": 1793685470615655444
+        }
+      ]
+    },
+    {
+      "pid": "1568",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 11221,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:1568:1:begin",
+          "trace_ns": 1793685482515665985,
+          "realtime_before_ns": 1793685482515652264,
+          "realtime_after_ns": 1793685482515685227
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:1568:1:end",
+          "trace_ns": 1793685482757716472,
+          "realtime_before_ns": 1793685482757708371,
+          "realtime_after_ns": 1793685482757727693
+        }
+      ]
+    }
+  ],
+  "status": "aligned"
+}

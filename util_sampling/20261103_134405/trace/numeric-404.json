@@ -1,0 +1,1215 @@
+{
+"traceEvents": [
+{
+	"args":	{
+		"name":	"X201",
+		"version":	"0.0.1"
+	},
+	"cat":	"__metadata",
+	"ph":	"M",
+	"name":	"process_name",
+	"pid":	2
+},{
+	"args":	{
+		"domain":	0,
+		"id":	0,
+		"index":	1,
+		"name":	"GLU_NUMERIC_UTIL:404:1:begin"
+	},
+	"ph":	"X",
+	"ts":	1793684662144508119,
+	"dur":	0,
+	"name":	"GLU_NUMERIC_UTIL:404:1:begin",
+	"pid":	5,
+	"tid":	769
+}
+,{
+	"args":	{
+		"domain":	0,
+		"id":	0,
+		"index":	2,
+		"name":	"GLU_NUMERIC_UTIL:404:1:end"
+	},
+	"ph":	"X",
+	"ts":	1793684662306677038,
+	"dur":	0,
+	"name":	"GLU_NUMERIC_UTIL:404:1:end",
+	"pid":	5,
+	"tid":	769
+}
+,{
+	"args":	{
+		"co_id":	1,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662133548087,
+	"dur":	7890,
+	"name":	"hcGetDeviceCount",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	2,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662133568628,
+	"dur":	3041,
+	"name":	"hcSetDevice",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	3,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662133574999,
+	"dur":	2600,
+	"name":	"hcGetDeviceProperties",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	4,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662133580869,
+	"dur":	62495,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	4,
+		"chnl_id":	0,
+		"chnl_type":	0,
+		"co_id":	5,
+		"device_id":	0,
+		"flags":	1,
+		"kind":	2,
+		"link":	true,
+		"mem_kind":	3,
+		"stream_id":	0,
+		"value":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662138565120,
+	"dur":	10752,
+	"name":	"memset",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	50331653,
+	"ts":	1793684662138565120,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	5,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662133646134,
+	"dur":	4794077,
+	"name":	"hcMemset",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331653,
+	"ts":	1793684662133646134,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	6,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138446832,
+	"dur":	166972,
+	"name":	"hcDeviceSynchronize",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	7,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138616264,
+	"dur":	12951,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	8,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138644006,
+	"dur":	9570,
+	"name":	"hcFuncGetAttributes",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	9,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138656637,
+	"dur":	2110,
+	"name":	"hcOccupancyMaxActiveBlocksPerMultiprocessor",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	10,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138660787,
+	"dur":	3390,
+	"name":	"hcEventCreate",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	11,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138664557,
+	"dur":	520,
+	"name":	"hcEventCreate",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	12,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138667747,
+	"dur":	6071,
+	"name":	"hcEventRecord",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	13,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138674438,
+	"dur":	52394,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	14,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138727632,
+	"dur":	20041,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	15,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138748133,
+	"dur":	20321,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	16,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138768925,
+	"dur":	15841,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	17,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138785376,
+	"dur":	1780,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	18,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138787496,
+	"dur":	16221,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	19,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138804177,
+	"dur":	1380,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	4,
+		"chnl_id":	0,
+		"chnl_type":	0,
+		"co_id":	20,
+		"device_id":	0,
+		"flags":	1,
+		"kind":	2,
+		"link":	true,
+		"mem_kind":	3,
+		"stream_id":	0,
+		"value":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662138856192,
+	"dur":	10496,
+	"name":	"memset",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	50331668,
+	"ts":	1793684662138856192,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	20,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138806317,
+	"dur":	37803,
+	"name":	"hcMemset",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331668,
+	"ts":	1793684662138806317,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	2730852,
+		"chnl_id":	65535,
+		"chnl_type":	72,
+		"co_id":	21,
+		"copy_kind":	1,
+		"device_id":	0,
+		"dst_kind":	3,
+		"flags":	1,
+		"kind":	1,
+		"link":	true,
+		"src_kind":	2,
+		"stream_id":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662138873856,
+	"dur":	262144,
+	"name":	"memcpy HTOD(pinned,device)",
+	"pid":	3,
+	"cat":	"0",
+	"tid":	0
+}
+,{
+	"ph":	"f",
+	"id":	50331669,
+	"ts":	1793684662138873856,
+	"name":	"Launch",
+	"pid":	3,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	0
+}
+,{
+	"args":	{
+		"co_id":	21,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662138845970,
+	"dur":	309282,
+	"name":	"hcMemcpy",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331669,
+	"ts":	1793684662138845970,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	19828688,
+		"chnl_id":	0,
+		"chnl_type":	940974992,
+		"co_id":	22,
+		"copy_kind":	1,
+		"device_id":	0,
+		"dst_kind":	3,
+		"flags":	1,
+		"kind":	1,
+		"link":	true,
+		"src_kind":	2,
+		"stream_id":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662140326144,
+	"dur":	368640,
+	"name":	"memcpy HTOD(pinned,device)",
+	"pid":	3,
+	"cat":	"0",
+	"tid":	0
+}
+,{
+	"ph":	"f",
+	"id":	50331670,
+	"ts":	1793684662140326144,
+	"name":	"Launch",
+	"pid":	3,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	0
+}
+,{
+	"args":	{
+		"co_id":	22,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662139155882,
+	"dur":	1567660,
+	"name":	"hcMemcpy",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331670,
+	"ts":	1793684662139155882,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	39657376,
+		"chnl_id":	0,
+		"chnl_type":	5,
+		"co_id":	23,
+		"copy_kind":	1,
+		"device_id":	0,
+		"dst_kind":	3,
+		"flags":	1,
+		"kind":	1,
+		"link":	true,
+		"src_kind":	2,
+		"stream_id":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662142714112,
+	"dur":	766464,
+	"name":	"memcpy HTOD(pinned,device)",
+	"pid":	3,
+	"cat":	"0",
+	"tid":	0
+}
+,{
+	"ph":	"f",
+	"id":	50331671,
+	"ts":	1793684662142714112,
+	"name":	"Launch",
+	"pid":	3,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	0
+}
+,{
+	"args":	{
+		"co_id":	23,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662140724572,
+	"dur":	2774146,
+	"name":	"hcMemcpy",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331671,
+	"ts":	1793684662140724572,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	2730848,
+		"chnl_id":	65535,
+		"chnl_type":	8,
+		"co_id":	24,
+		"copy_kind":	1,
+		"device_id":	0,
+		"dst_kind":	3,
+		"flags":	1,
+		"kind":	1,
+		"link":	true,
+		"src_kind":	2,
+		"stream_id":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662143819008,
+	"dur":	50432,
+	"name":	"memcpy HTOD(pinned,device)",
+	"pid":	3,
+	"cat":	"0",
+	"tid":	0
+}
+,{
+	"ph":	"f",
+	"id":	50331672,
+	"ts":	1793684662143819008,
+	"name":	"Launch",
+	"pid":	3,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	0
+}
+,{
+	"args":	{
+		"co_id":	24,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662143499518,
+	"dur":	381777,
+	"name":	"hcMemcpy",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331672,
+	"ts":	1793684662143499518,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	4,
+		"chnl_id":	0,
+		"chnl_type":	0,
+		"co_id":	25,
+		"device_id":	0,
+		"flags":	1,
+		"kind":	2,
+		"link":	true,
+		"mem_kind":	3,
+		"stream_id":	0,
+		"value":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662143965696,
+	"dur":	6656,
+	"name":	"memset",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	50331673,
+	"ts":	1793684662143965696,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	25,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662143882005,
+	"dur":	4320,
+	"name":	"hcMemset",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331673,
+	"ts":	1793684662143882005,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	2730848,
+		"chnl_id":	0,
+		"chnl_type":	0,
+		"co_id":	26,
+		"device_id":	0,
+		"flags":	1,
+		"kind":	2,
+		"link":	true,
+		"mem_kind":	3,
+		"stream_id":	0,
+		"value":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662143975168,
+	"dur":	20992,
+	"name":	"memset",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	50331674,
+	"ts":	1793684662143975168,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	26,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662143886595,
+	"dur":	2140,
+	"name":	"hcMemset",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331674,
+	"ts":	1793684662143886595,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	27,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662143889465,
+	"dur":	117588,
+	"name":	"hcMalloc",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	267623104,
+		"chnl_id":	0,
+		"chnl_type":	0,
+		"co_id":	28,
+		"device_id":	0,
+		"flags":	1,
+		"kind":	2,
+		"link":	true,
+		"mem_kind":	3,
+		"stream_id":	0,
+		"value":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662144019456,
+	"dur":	195584,
+	"name":	"memset",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	50331676,
+	"ts":	1793684662144019456,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	28,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662144007673,
+	"dur":	3201,
+	"name":	"hcMemset",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331676,
+	"ts":	1793684662144007673,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	29,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662144011704,
+	"dur":	284530,
+	"name":	"hcDeviceSynchronize",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	30,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662144310285,
+	"dur":	4290,
+	"name":	"hcDeviceGetPCIBusId",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"block":	{
+			"x":	256,
+			"y":	1,
+			"z":	1
+		},
+		"co_id":	31,
+		"complete_ts":	1793684662306631325,
+		"device_id":	0,
+		"dispatch_id":	0,
+		"grid":	{
+			"x":	104,
+			"y":	1,
+			"z":	1
+		},
+		"hw_queue_id":	[0],
+		"is_dynamic_parallel":	false,
+		"is_recompiled":	false,
+		"launch_type":	1,
+		"link":	true,
+		"max_block_size":	512,
+		"mem":	{
+			"dynamic_shared":	33024,
+			"private_per_thread":	0,
+			"private_total":	0,
+			"registers_per_thread":	24,
+			"static_shared":	16
+		},
+		"name":	"_Z29LL_factorizeSyncFreeSmPaddingPKjS0_PdS0_S1_PjS2_jbdjS2_",
+		"queue_id":	0,
+		"queue_ts":	1793684662144925738,
+		"shared_memeory_occupancy(%)":	50,
+		"submit_ts":	1793684662144932419,
+		"vreg_occupancy(%)":	4
+	},
+	"ph":	"X",
+	"ts":	1793684662144951040,
+	"dur":	161663232,
+	"name":	"LL_factorizeSyncFreeSmPadding(unsigned int const*, unsigned int const*, double*, unsigned int const*, double*, unsigned int*, unsigned int*, unsigned int, bool, double, unsigned int, unsigned int*)",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	50331679,
+	"ts":	1793684662144951040,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	31,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662144547251,
+	"dur":	387168,
+	"name":	"hcLaunchCooperativeKernel",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	32,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662144936929,
+	"dur":	640,
+	"name":	"hcGetLastError",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	33,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662144938499,
+	"dur":	161719098,
+	"name":	"hcDeviceSynchronize",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"bytes":	39657376,
+		"chnl_id":	0,
+		"chnl_type":	5,
+		"co_id":	34,
+		"copy_kind":	2,
+		"device_id":	0,
+		"dst_kind":	1,
+		"flags":	1,
+		"kind":	1,
+		"link":	true,
+		"src_kind":	3,
+		"stream_id":	0
+	},
+	"ph":	"X",
+	"ts":	1793684662308271360,
+	"dur":	794112,
+	"name":	"memcpy DTOH(device,pageable)",
+	"pid":	3,
+	"cat":	"0",
+	"tid":	0
+}
+,{
+	"ph":	"f",
+	"id":	50331682,
+	"ts":	1793684662308271360,
+	"name":	"Launch",
+	"pid":	3,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	0
+}
+,{
+	"args":	{
+		"co_id":	34,
+		"link":	true,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662306877582,
+	"dur":	2203595,
+	"name":	"hcMemcpy",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"ph":	"s",
+	"id":	50331682,
+	"ts":	1793684662306877582,
+	"name":	"Launch",
+	"pid":	1,
+	"cat":	"Launch",
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	35,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662309082828,
+	"dur":	5500,
+	"name":	"hcEventRecord",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	36,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662309091528,
+	"dur":	138830,
+	"name":	"hcEventSynchronize",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	37,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662309238799,
+	"dur":	1880,
+	"name":	"hcEventElapsedTime",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	38,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662310936198,
+	"dur":	79896,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	39,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311017134,
+	"dur":	18701,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	40,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311036355,
+	"dur":	13161,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	41,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311050006,
+	"dur":	14441,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	42,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311064837,
+	"dur":	10751,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	43,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311075938,
+	"dur":	1780,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	44,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311078068,
+	"dur":	10611,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	45,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311089129,
+	"dur":	1990,
+	"name":	"hcFree",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	46,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311097699,
+	"dur":	2761,
+	"name":	"hcEventDestroy",
+	"pid":	1,
+	"tid":	404
+}
+,{
+	"args":	{
+		"co_id":	47,
+		"link":	false,
+		"process_id":	404,
+		"ret":	0,
+		"thread_id":	404
+	},
+	"ph":	"X",
+	"ts":	1793684662311100910,
+	"dur":	460,
+	"name":	"hcEventDestroy",
+	"pid":	1,
+	"tid":	404
+}
+]
+}

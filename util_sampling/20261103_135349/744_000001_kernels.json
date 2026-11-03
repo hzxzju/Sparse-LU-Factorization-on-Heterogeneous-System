@@ -1,0 +1,10 @@
+[
+  {
+    "start_ns": 1793685248701558272,
+    "end_ns": 1793685248717990400,
+    "name": "LL_factorizeSyncFreeSmPadding(unsigned int const*, unsigned int const*, double*, unsigned int const*, double*, unsigned int*, unsigned int*, unsigned int, bool, double, unsigned int, unsigned int*)",
+    "device_id": 0,
+    "stream_id": 0,
+    "correlation_id": 31
+  }
+]

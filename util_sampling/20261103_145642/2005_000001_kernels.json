@@ -1,0 +1,10 @@
+[
+  {
+    "start_ns": 1793689003494089728,
+    "end_ns": 1793689003695211520,
+    "name": "(anonymous namespace)::SpinAllSms((anonymous namespace)::Signal*, bool, unsigned long long)",
+    "device_id": 0,
+    "stream_id": 0,
+    "correlation_id": 10
+  }
+]

@@ -1,0 +1,290 @@
+{
+"traceEvents": [
+{
+	"args":	{
+		"name":	"X201",
+		"version":	"0.0.1"
+	},
+	"cat":	"__metadata",
+	"ph":	"M",
+	"name":	"process_name",
+	"pid":	2
+},{
+	"args":	{
+		"domain":	0,
+		"id":	0,
+		"index":	1,
+		"name":	"GLU_NUMERIC_UTIL:2005:1:begin"
+	},
+	"ph":	"X",
+	"ts":	1793689003488513592,
+	"dur":	0,
+	"name":	"GLU_NUMERIC_UTIL:2005:1:begin",
+	"pid":	5,
+	"tid":	769
+}
+,{
+	"args":	{
+		"domain":	0,
+		"id":	0,
+		"index":	2,
+		"name":	"GLU_NUMERIC_UTIL:2005:1:end"
+	},
+	"ph":	"X",
+	"ts":	1793689003695300748,
+	"dur":	0,
+	"name":	"GLU_NUMERIC_UTIL:2005:1:end",
+	"pid":	5,
+	"tid":	769
+}
+,{
+	"args":	{
+		"co_id":	1,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487703865,
+	"dur":	6180,
+	"name":	"hcGetDeviceCount",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	2,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487718196,
+	"dur":	4190,
+	"name":	"hcSetDevice",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	3,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487725437,
+	"dur":	2190,
+	"name":	"hcGetDeviceProperties",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	4,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487731597,
+	"dur":	1240,
+	"name":	"hcDeviceGetPCIBusId",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	5,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487736397,
+	"dur":	5391,
+	"name":	"hcFuncGetAttributes",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	6,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487743538,
+	"dur":	2930,
+	"name":	"hcOccupancyMaxActiveBlocksPerMultiprocessor",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	7,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003487748148,
+	"dur":	262409,
+	"name":	"hcMallocHost",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	8,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003488017237,
+	"dur":	890,
+	"name":	"hcHostGetDevicePointer",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	9,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003488041909,
+	"dur":	980,
+	"name":	"hcDeviceGetPCIBusId",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"block":	{
+			"x":	256,
+			"y":	1,
+			"z":	1
+		},
+		"co_id":	10,
+		"complete_ts":	1793689003695248285,
+		"device_id":	0,
+		"dispatch_id":	0,
+		"grid":	{
+			"x":	104,
+			"y":	1,
+			"z":	1
+		},
+		"hw_queue_id":	[2],
+		"is_dynamic_parallel":	false,
+		"is_recompiled":	false,
+		"launch_type":	1,
+		"link":	true,
+		"max_block_size":	512,
+		"mem":	{
+			"dynamic_shared":	33024,
+			"private_per_thread":	0,
+			"private_total":	0,
+			"registers_per_thread":	4,
+			"static_shared":	0
+		},
+		"name":	"_ZN12_GLOBAL__N_110SpinAllSmsEPNS_6SignalEby",
+		"queue_id":	0,
+		"queue_ts":	1793689003494035911,
+		"shared_memeory_occupancy(%)":	50,
+		"submit_ts":	1793689003494043292,
+		"vreg_occupancy(%)":	0
+	},
+	"ph":	"X",
+	"ts":	1793689003494089728,
+	"dur":	201121792,
+	"name":	"(anonymous namespace)::SpinAllSms((anonymous namespace)::Signal*, bool, unsigned long long)",
+	"pid":	2,
+	"cat":	"0",
+	"tid":	1024
+}
+,{
+	"ph":	"f",
+	"id":	16777226,
+	"ts":	1793689003494089728,
+	"name":	"Launch",
+	"pid":	2,
+	"bp":	"e",
+	"cat":	"Launch",
+	"tid":	1024
+}
+,{
+	"args":	{
+		"co_id":	10,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003488532683,
+	"dur":	5511859,
+	"name":	"hcLaunchCooperativeKernel",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	11,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003494049122,
+	"dur":	770,
+	"name":	"hcGetLastError",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	12,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003695194141,
+	"dur":	76945,
+	"name":	"hcDeviceSynchronize",
+	"pid":	1,
+	"tid":	2005
+}
+,{
+	"args":	{
+		"co_id":	13,
+		"link":	false,
+		"process_id":	2005,
+		"ret":	0,
+		"thread_id":	2005
+	},
+	"ph":	"X",
+	"ts":	1793689003695522734,
+	"dur":	5820,
+	"name":	"hcFreeHost",
+	"pid":	1,
+	"tid":	2005
+}
+]
+}

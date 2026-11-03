@@ -1,0 +1,43 @@
+{
+  "smi_clock": "CLOCK_REALTIME/local timezone",
+  "smi_interval_ms": 1,
+  "trace_time_unit": "ns",
+  "run": {
+    "start_realtime_ns": 1793689021622972287,
+    "sampler_ready_realtime_ns": 1793689021666589200,
+    "first_smi_timestamp_ns": 1793689021656120000,
+    "end_realtime_ns": 1793689023291080611,
+    "last_smi_timestamp_ns": 1793689023287926000,
+    "realtime_minus_monotonic_elapsed_ns": 1580,
+    "host_timezone": [
+      "CST",
+      "CST"
+    ],
+    "tolerance_ns": 1000000
+  },
+  "phases": [
+    {
+      "pid": "2092",
+      "phase_id": "1",
+      "status": "aligned",
+      "trace_time_unit": "ns",
+      "offset_ns": 0,
+      "uncertainty_ns": 18422,
+      "anchors": [
+        {
+          "marker": "GLU_NUMERIC_UTIL:2092:1:begin",
+          "trace_ns": 1793689021879971900,
+          "realtime_before_ns": 1793689021879957919,
+          "realtime_after_ns": 1793689021879997502
+        },
+        {
+          "marker": "GLU_NUMERIC_UTIL:2092:1:end",
+          "trace_ns": 1793689021987591961,
+          "realtime_before_ns": 1793689021987577360,
+          "realtime_after_ns": 1793689021987610383
+        }
+      ]
+    }
+  ],
+  "status": "aligned"
+}

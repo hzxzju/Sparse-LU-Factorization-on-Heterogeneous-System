@@ -97,6 +97,9 @@ test-gpu-device-selection: gpu_device_selection_test
 gpu_device_probe: ../tests/gpu_device_probe.cpp ../include/gpu_device.h Makefile
 	$(HTCC) $(CPPFLAGS) $(HTCCFLAGS) $(HTCC_GCC_FLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
 
+gpu_idle_spin: gpu_idle_spin.cu ../include/numeric_sm_padding.h ../include/numeric_util.h Makefile
+	$(HTCC) $(CPPFLAGS) $(HTCC_CPPFLAGS) $(HTCCFLAGS) $(HTCC_GCC_FLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
+
 lu_cmd.o: lu_cmd.cpp Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
@@ -110,6 +113,7 @@ nicslu/util/nicslu_util.a: $(wildcard nicslu/util/*.c nicslu/util/*.h nicslu/inc
 	$(MAKE) -C nicslu util
 
 clean:
+	rm -f gpu_idle_spin
 	rm -f numeric_sm_padding_host_test numeric_strategies_test test_numeric_strategies.o
 	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test symbolic_auto_test
 	$(MAKE) -C preprocess clean
