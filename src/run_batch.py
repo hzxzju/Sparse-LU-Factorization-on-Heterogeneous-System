@@ -95,7 +95,7 @@ def main():
     parser.add_argument("--progress", action="store_true",
                         help="flush solver stage diagnostics to solver.log while running")
     parser.add_argument("--residual-tol", type=float, default=1e-6,
-                        help="absolute ||x_GPU-x_CPU||_2 target and Ax-b refinement tolerance (default: 1e-6)")
+                        help="relative ||x_GPU-x_CPU||_2 / ||x_CPU||_2 target and absolute Ax-b refinement tolerance (default: 1e-6)")
     parser.add_argument("--max-refine-iters", default="n",
                         help="maximum correction solves; n = matrix order (default), 0 disables corrections")
     parser.add_argument("--timeout", type=float, default=0,
@@ -175,11 +175,11 @@ def main():
         writer.writeheader()
         csv_file.flush()
         for index, matrix in enumerate(matrices, 1):
-            # Each process has its own cwd so lu_cmd's x.dat never gets overwritten.
+            # Each process has its own cwd so lu_cmd's solution never gets overwritten.
             run_dir = output_dir / "{:04d}_{}".format(index, matrix.stem)
             run_dir.mkdir()
             log_path = run_dir / "solver.log"
-            solution_path = run_dir / "x.dat"
+            solution_path = run_dir / "x.bin"
             command = [str(solver), "-i", str(matrix), "-u", args.update_strategy,
                        "-s", args.scheduling, "--residual-tol", str(args.residual_tol),
                        "--max-refine-iters", str(args.max_refine_iters), "--symbolic-backend", args.symbolic_backend,
@@ -220,7 +220,7 @@ def main():
                     if result.returncode != 0:
                         if result.returncode == 2:
                             row.update(status="residual_not_converged",
-                                       note="solver did not reach the GPU-CPU absolute L2 target")
+                                       note="solver did not reach the GPU-CPU relative L2 target")
                         else:
                             row.update(status="failed", note="solver returned a nonzero exit code")
                 except subprocess.TimeoutExpired:
@@ -240,9 +240,11 @@ def main():
                     row.update(status="missing_metrics", note="missing: " + ", ".join(missing))
                 elif invalid:
                     row.update(status="invalid_metrics", note="invalid: " + ", ".join(invalid))
-                elif metrics["solution_error_l2"] > args.residual_tol:
+                elif metrics["relative_solution_error_l2"] > args.residual_tol:
                     row.update(status="residual_not_converged",
-                               note="GPU-CPU absolute L2 error exceeds {}".format(args.residual_tol))
+                               note="GPU-CPU relative L2 error exceeds {}".format(args.residual_tol))
+                elif not solution_path.is_file():
+                    row.update(status="missing_solution", note="solver did not write x.bin")
             if solution_path.is_file():
                 row["solution_path"] = str(solution_path.relative_to(output_dir))
             writer.writerow(row)

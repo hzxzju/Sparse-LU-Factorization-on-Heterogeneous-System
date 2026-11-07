@@ -19,58 +19,93 @@ USB 3-Clause License
 docs: contains some related docoments and publications for GLU
 src: contains all the source codes for GLU
 
-## CLI solution error and iterative refinement
+## Task 1 命令、输出与计时
 
-After each GLU solve, `lu_cmd` reads the existing CPU KLU solution from
-`src/KLU_standalone/test_result/<matrix_stem>_x.txt`; it does not run KLU.
-Both solutions must correspond to the original matrix and `b = ones(n)`.
-Here `x_GPU` means the final GLU solution (GPU LU plus CPU triangular solve
-and any refinement). Logs report scientific notation with at least 17 digits:
-
-```text
-GPU-CPU absolute L2 error: ...
-GPU-CPU relative L2 error: ...
-```
-
-These are `||x_GPU-x_CPU||_2` and `||x_GPU-x_CPU||_2 / ||x_CPU||_2`.
-Reference-file reading and solution comparison pause all stage timers, so they
-are excluded from `once_s`, `solve_s`, `post_s` and `total_solve_ms`.
-The existing CPU files are only read. Missing, malformed, nonfinite or
-wrong-length reference vectors cause an explicit error.
+在仓库根目录编译并运行：
 
 ```sh
-make -C src MAIN
-./src/lu_cmd -i src/matrix/add32_csr.mtx
-./src/lu_cmd -i src/matrix/add32_csr.mtx --cpu-reference /path/to/add32_csr_x.txt
+make MAIN
+bin/lu_cmd -i <matrix.mtx>
+```
+
+`make MAIN` 和 `make -C src MAIN` 均生成 `src/lu_cmd` 及入口
+`bin/lu_cmd`。默认每个进程只读取一个矩阵、只执行一次冷启动数值分解和求解，
+右端项为 `b=ones(n)`；无需外部 CPU 参考解。
+
+成功时在**当前工作目录**写出 `x.bin`，文件恰为 `8 + 8*n` 字节：
+前 8 字节为小端有符号 `int64 n`，紧接按下标 `0..n-1` 排列的
+`n` 个小端 IEEE-754 `float64`，没有其他头尾或填充。内部保留的
+`long double` 解在输出时转换为 `float64`；非有限解或无法写完/关闭文件时返回非零。
+默认成功返回 0，且仅在 `x.bin` 成功写出后返回 0。
+
+Python 读取示例（`struct` 的 `<` 显式指定小端，适用于大小端主机）：
+
+```python
+import struct
+with open('x.bin', 'rb') as f:
+    n, = struct.unpack('<q', f.read(8))
+    x = struct.unpack('<' + 'd' * n, f.read(8 * n))
+    assert f.read() == b''
+```
+
+stdout 在所有求解资源 cleanup 完成后只打印一行，秒数非负有限、保留六位小数：
+
+```text
+once_s=7.767300 solve_s=0.555000 post_s=0.020000
+```
+
+全部阶段采用 `CLOCK_MONOTONIC`，GPU 阶段先同步设备再停表。
+`weighted = 0.005 * once_s + solve_s`；`post_s` 不参与加权。
+诊断、逐阶段秒数和 `total_solve_ms = weighted * 1000` 写入 stderr。
+
+| 汇总 | 阶段 |
+| --- | --- |
+| `once_s` | `read_parse`, `rhs_read`, `preprocess`, `ordering`, `symbolic`, `analysis_other`, `context_init`, `workspace_alloc`, `kernel_compile`, `plan_upload`, `cleanup` |
+| `solve_s` | `value_h2d`, `numeric_factor`, `triangular_solve`, `solution_d2h`, `refinement`, `sync` |
+| `post_s` | `residual_check`, `output_write`, `logging` |
+
+数值 LU 与排序/符号分析分开计时；`value_h2d` 只含数值上传。
+当前使用 GPU LU 和 CPU 前代/回代，故 `solution_d2h=0`；LU 因子回传及
+CPU 求解路径的排列/缩放、精度转换计入 `refinement`，不冒充解向量回传。
+各 GPU 阶段末尾已包含同步，`sync=0`；无显式运行时编译，`kernel_compile=0`。
+最终残差检查、输出和日志计入 `post_s`；即使最后才发生的资源释放仍计入 `once_s`。
+
+### S3 循环（已支持，默认 N=1）
+
+```sh
+bin/lu_cmd -i <matrix.mtx> --repeat N
+```
+
+省略 `--repeat`、只给 `--repeat` 而省略 N、或 N=1，均只执行一次，**不预热**。
+N 必须为正整数。N>1 时，预处理、排序、符号分析、GPU 工作区分配和结构上传
+各只做一次；先预热一次（不计时），再完成 N 次数值分解、solve 和精化。
+每次分解都从原始数值快照恢复 GPU 矩阵，并重置工作区、任务计数器及完成标志。
+`x.bin`、最终验算和计时行对应最后一轮；一次性准备与最终 cleanup 仍保留在 `once_s`。
+
+此参数仅供 S3 利用率测量；正确性和计时评测使用不带 `--repeat` 的命令。
+建议按实际矩阵耗时选择 N，使 N 轮窗口约 3 秒，评测方在该窗口内使用
+ht-smi 每 10 ms 采样并计算时间加权平均。
+
+### 可选 CPU 对比和精化
+
+`--residual-tol` 默认为 `1e-6`，`--max-refine-iters` 默认为矩阵阶数 n，
+`0` 禁用校正。迭代精化使用 `r=b-Ax` 和现有 LU 因子，遇到收敛、次数上限、
+停滞或非有限算术时停止，并保留最好解。精化及其残差计算全部计入 `solve_s`。
+
+只有显式传入 `--cpu-reference FILE` 时才读取 CPU 解并比较绝对/相对 L2 误差；
+读取和比较计入 `post_s` 的 `residual_check`。参考文件应恰好包含 n 个有限数，
+对应同一原始矩阵及 `b=ones(n)`。相对 L2 解误差 `||x_GPU-x_CPU||₂ / ||x_CPU||₂`
+超过 `--residual-tol`（默认 `1e-6`）时返回 2，等于或低于阈值时通过；
+仍写出 `x.bin`。该诊断模式还额外写入保留 `long double` 精度的文本 `x.dat`。
+
+```sh
+bin/lu_cmd -i src/matrix/add32_csr.mtx --cpu-reference src/KLU_standalone/test_result/add32_csr_x.txt
 python3 src/run_batch.py --cpu-reference-dir src/KLU_standalone/test_result
 ```
 
-`--residual-tol` defaults to `1e-6` (finite and positive). Exit code 0 means the
-absolute GPU/CPU L2 error meets this tolerance; 2 means it misses the target.
-Relative L2 error is reported separately and is not the acceptance criterion.
-For a zero CPU vector, relative error is 0 if both solutions are zero and
-infinity otherwise. Batch CSV has 29 columns: `solution_error_l2` and
-`relative_solution_error_l2` hold solution errors; `axb_residual_l1`,
-`axb_residual_l2`, `axb_residual_linf` hold auxiliary equation residuals.
-The old ambiguous `residual_l1/l2/linf` column names are removed.
-A missed comparison target is recorded as `residual_not_converged`.
-
-Iterative refinement still uses `r=b-Ax`, existing GLU factors and the same
-`--residual-tol` as its equation-residual stopping tolerance. It does not use
-the CPU reference to correct the solution. `--max-refine-iters` defaults to
-`n` (matrix order); `0` disables corrections. Refinement stops on convergence,
-the cap, stagnation or nonfinite arithmetic, preserving the best solution.
-`Refinement status` describes this internal Ax-b check; the separate
-`GPU-CPU comparison status` controls the final exit code. Updates and residual
-accumulation retain CPU `long double` precision; factors and solves stay double.
-`x.dat` preserves the final extended-precision GLU solution.
-
-Refinement remains in `solve_s`; independent final Ax-b checks and output are
-in `post_s`. `total_solve_ms = (0.005 * once_s + solve_s) * 1000`.
-After cleanup, stdout contains only `once_s=... solve_s=... post_s=...`
-(seconds, six decimals); comparison results and diagnostics go to stderr.
-The Python `pyglu` API retains its existing behavior. See
-[src/RUN_BATCH.md](src/RUN_BATCH.md) for all output and timing definitions.
+批处理脚本继续显式启用 CPU 对比，CSV 的 `solution_path` 指向 `x.bin`。
+Python `pyglu` API 保持原有单次数值分解行为。其他参数见
+[src/RUN_BATCH.md](src/RUN_BATCH.md)，验证命令见 [tests/README.md](tests/README.md)。
 
 ## Publications: 
 J1.  K. He, S. X.-D. Tan, H. Wang and G. Shi, “GPU-Accelerated Parallel Sparse LU Factorization Method for Fast Circuit Analysis”, IEEE Transactions on Very Large Scale Integrated Systems  (TVLSI), vol. 24, no.3, pp.1140-1150, March 2016.

@@ -70,6 +70,22 @@ static REAL run_case(const char *name, const std::vector<REAL> &a, unsigned n,
             sym.leveling();
         LUonDevice(sym, out, err, perturb, strategy, mode.scheduling, mode.workers, mode.padding);
         if (!err.str().empty()) throw std::runtime_error(err.str());
+        // Exercise the CLI's persistent-device loop: warmup + two cycles must
+        // restore values, workspace, SF tickets and completion flags each time.
+        const std::vector<REAL> expected_factors = sym.val;
+        sym.predictLU(rows.data(), ptr.data(), values.data());
+        unsigned cycles = 0;
+        LUonDeviceRepeated(sym, out, err, perturb, strategy, mode.scheduling,
+                           mode.workers, mode.padding, 2, [&]() {
+            ++cycles;
+            for (unsigned p = 0; p < sym.nnz; ++p)
+                if (!std::isfinite(sym.val[p]) ||
+                    std::fabs(sym.val[p] - expected_factors[p]) >
+                        1e-10 * (1 + std::fabs(expected_factors[p])))
+                    throw std::runtime_error(std::string(name) + ": persistent numeric repeat");
+        });
+        if (cycles != 3 || !err.str().empty())
+            throw std::runtime_error(std::string(name) + ": numeric repeat cycle count/error " + err.str());
         if (mode.padding && out.str().find("resident_blocks_per_sm=1") == std::string::npos)
             throw std::runtime_error("numeric SM padding did not use the cooperative grid");
         if (mode.scheduling == SchedulingStrategy::SynchronizationFree) {

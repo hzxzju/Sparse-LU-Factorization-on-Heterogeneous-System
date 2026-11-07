@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import struct
 import unittest
 
 
@@ -13,6 +14,7 @@ SOLVER = '''#!/usr/bin/env python3
 import argparse
 from pathlib import Path
 import time
+import struct
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-i', required=True)
@@ -63,14 +65,18 @@ print('Total GPU time: 7 ms')
 print('Triangular solve time (CPU): 0.5 ms')
 print('Task 1 total solve time (T_gpu): 13.75 ms')  # Old wall time must be ignored.
 print('total_solve_ms=999')  # Derive weighting from the terminal summary instead.
-print('GPU-CPU absolute L2 error: {}'.format('0.000002' if mode in ('unconverged', 'exit2') else 'nan' if mode == 'invalid_error' else '0.0000002'))
+print('GPU-CPU absolute L2 error: {}'.format('23' if mode == 'large_absolute' else 'nan' if mode == 'invalid_error' else '0.0000002'))
 if mode != 'missing_comparison':
-    print('GPU-CPU relative L2 error: 0.0000001')
+    print('GPU-CPU relative L2 error: {}'.format('0.000002' if mode in ('unconverged', 'exit2') else '0.000001' if mode == 'at_tolerance' else 'nan' if mode == 'invalid_relative' else '0.0000001'))
 print('Ax-b (1-norm): 0.000003')
 print('Ax-b (2-norm): {}'.format('10' if mode == 'large_axb' else '0.0000002'))
 if mode != 'missing':
     print('Ax-b (infinite-norm): 0.000001')
 Path('x.dat').write_text('1\\n' * 4)
+Path('x.bin').write_bytes(struct.pack('<q4d', 4, 1, 1, 1, 1))
+if mode == 'no_solution':
+    Path('x.bin').unlink()
+    Path('x.dat').unlink()
 if mode != 'missing_summary':
     once = 'nan' if mode == 'invalid' else '-0.010000' if mode == 'negative' else '0.010000'
     solve = 'inf' if mode == 'infinite_solve' else '0.004000'
@@ -113,7 +119,7 @@ class BatchTimingTests(unittest.TestCase):
                                            for i, name in enumerate(sorted(names), 1)})
         for row in rows:
             run_dir = (self.output / row["log_path"]).parent
-            expected = {"solver.log", "x.dat"} if row["solution_path"] else {"solver.log"}
+            expected = {"solver.log", "x.dat", "x.bin"} if row["solution_path"] else {"solver.log"}
             self.assertEqual({p.name for p in run_dir.iterdir()}, expected)
         return result, rows
 
@@ -135,7 +141,8 @@ class BatchTimingTests(unittest.TestCase):
                         axb_residual_l1=3e-6, axb_residual_l2=2e-7, axb_residual_linf=1e-6)
         for field, value in expected.items():
             self.assertEqual(float(row[field]), value, field)
-        self.assertEqual((self.output / row["solution_path"]).read_text(), "1\n" * 4)
+        self.assertEqual((self.output / row["solution_path"]).read_bytes(),
+                         struct.pack('<q4d', 4, 1, 1, 1, 1))
 
     def test_solution_comparison_controls_target_and_requires_both_norms(self):
         result, rows = self.run_batch(["invalid_error", "large_axb", "missing_comparison", "unconverged"])
@@ -143,7 +150,20 @@ class BatchTimingTests(unittest.TestCase):
         self.assertEqual([row["status"] for row in rows],
                          ["invalid_metrics", "ok", "missing_metrics", "residual_not_converged"])
         self.assertEqual(float(rows[1]["axb_residual_l2"]), 10)
-        self.assertIn("GPU-CPU absolute L2", rows[3]["note"])
+        self.assertIn("GPU-CPU relative L2", rows[3]["note"])
+
+    def test_relative_target_accepts_large_absolute_error_and_equality(self):
+        result, rows = self.run_batch(["at_tolerance", "large_absolute"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
+        self.assertEqual(float(rows[0]["relative_solution_error_l2"]), 1e-6)
+        self.assertEqual(float(rows[1]["solution_error_l2"]), 23)
+
+    def test_nonfinite_relative_error_is_rejected(self):
+        result, rows = self.run_batch(["invalid_relative"])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(rows[0]["status"], "invalid_metrics")
+        self.assertIn("relative_solution_error_l2", rows[0]["note"])
 
     def test_existing_cpu_reference_path_reaches_solver(self):
         reference_dir = self.root / "CPU results"
@@ -151,6 +171,12 @@ class BatchTimingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("cpu_reference=" + str(reference_dir / "small_x.txt"),
                       (self.output / rows[0]["log_path"]).read_text())
+
+    def test_success_requires_binary_solution(self):
+        result, rows = self.run_batch(["no_solution"])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(rows[0]["status"], "missing_solution")
+        self.assertEqual(rows[0]["solution_path"], "")
 
     def test_invalid_or_missing_terminal_summary_is_rejected(self):
         result, rows = self.run_batch(["duplicate", "infinite_solve", "invalid_post",

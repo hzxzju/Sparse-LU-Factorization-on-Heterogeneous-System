@@ -368,6 +368,7 @@ HostPattern BuildPattern(unsigned n, const unsigned *ai, const unsigned *ap,
         result.device = glu_gpu::SelectDevice(preferred,
             glu_gpu::DeviceRequirements(config.block_size, n / config.block_size + 1),
             properties, out);
+        Check(hcDeviceSynchronize(), "symbolic context synchronization");
     }
 
     DeviceArray<unsigned> d_ap(size_t(n) + 1), d_ai(ap[n]), d_diag_local(n);
@@ -521,6 +522,7 @@ HostPattern BuildSFPattern(unsigned n, const unsigned *ai, const unsigned *ap,
         glu_timing::Scope phase(GLU_CONTEXT_INIT);
         result.device = glu_gpu::SelectDevice(preferred,
             glu_gpu::DeviceRequirements(config.block_size, n / config.block_size + 1), properties, out);
+        Check(hcDeviceSynchronize(), "symbolic SF context synchronization");
     }
     size_t free_bytes = 0, total_bytes = 0;
     Check(hcMemGetInfo(&free_bytes, &total_bytes), "hcMemGetInfo(symbolic SF)");

@@ -124,24 +124,26 @@ HTHPCC host, the installed compiler is `$HOME/local/gcc-7.3.0/usr/bin/g++`):
 
 For a target-GPU integration check on the two problematic matrices, build and
 run each solver invocation from a separate output directory (each writes
-`x.dat`). With default arguments, the CLI targets absolute GPU/CPU solution error L2 <= 1e-6
-and uses the matrix order as the correction cap:
+`x.bin`, plus `x.dat` when explicitly comparing with a CPU reference).
+Pass `--cpu-reference` to check relative GPU/CPU solution error L2 <= 1e-6;
+the default CLI does not require reference files. The correction cap defaults to n:
 
 ```sh
 make -C src MAIN
 GLU_TEST_ROOT="$PWD"
 GLU_TEST_RESULTS=$(mktemp -d /tmp/glu-refinement-check.XXXXXX)
 mkdir "$GLU_TEST_RESULTS/asic" "$GLU_TEST_RESULTS/twotone"
-(cd "$GLU_TEST_RESULTS/asic" && "$GLU_TEST_ROOT/src/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/ASIC_680ks_csr.mtx")
-(cd "$GLU_TEST_RESULTS/twotone" && "$GLU_TEST_ROOT/src/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/twotone_csr.mtx")
+(cd "$GLU_TEST_RESULTS/asic" && "$GLU_TEST_ROOT/bin/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/ASIC_680ks_csr.mtx" --cpu-reference "$GLU_TEST_ROOT/src/KLU_standalone/test_result/ASIC_680ks_csr_x.txt")
+(cd "$GLU_TEST_RESULTS/twotone" && "$GLU_TEST_ROOT/bin/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/twotone_csr.mtx" --cpu-reference "$GLU_TEST_ROOT/src/KLU_standalone/test_result/twotone_csr_x.txt")
 ```
 
 Inspect `GPU-CPU absolute L2 error`, `GPU-CPU relative L2 error`,
-`CPU reference file` and the exit code: 0 means the absolute solution error meets
+`CPU reference file` and the exit code: 0 means the relative solution error meets
 the target, 2 means it misses the target. `Refinement status` still describes
 the internal Ax-b residual, independently of this final comparison. Existing
-CPU reference files are required; reference reading and comparison pause all
-stage timers, including `post_s`. `--max-refine-iters 0` provides an initial-solve comparison;
+CPU reference files are required only for the explicit comparison above;
+reference reading and comparison count in `post_s` as `residual_check`.
+`--max-refine-iters 0` provides an initial-solve comparison;
 `--max-refine-iters 1` checks the single-correction cap. The refinement time
 includes the initial residual check and all correction work, and is included in
 `solve_s` (the batch `total_solve_ms` is weighted). A stagnating or nonfinite candidate is rejected and stops refinement.
@@ -240,10 +242,15 @@ python3 -m unittest discover -s tests -p test_stage_timing.py -v
 python3 -m unittest discover -s tests -p test_run_batch.py -v
 ```
 
-The host CLI fixture uses real preprocessing and CPU substitution with a diagonal
-numeric stub. It checks exclusive CLOCK_MONOTONIC accounting, cleanup charging,
-stdout's single six-decimal timing line and weighted `total_solve_ms`. It does
-not validate GPU kernels. Batch cases reject duplicate/missing timing summaries,
+The host CLI fixture uses real preprocessing, CPU substitution and an independent
+dense numeric stub. It checks the exact little-endian `x.bin` layout and Ax=b,
+default/explicit single cold runs, warmup plus N cycles, one symbolic analysis,
+final-cycle timing retention, cleanup charging, output/nonfinite/numeric failures,
+optional CPU comparison, stdout's single six-decimal timing line and weighted
+`total_solve_ms`. It does not validate GPU kernels. The GPU numeric driver also
+exercises persistent warmup/repeat for every strategy and checks every cycle's
+factors against a single cold factorization, including SF counter/workspace resets.
+Batch cases reject duplicate/missing timing summaries,
 nonfinite/negative values, and ignore historical unweighted total-time labels.
 
 The opt-in numeric SM padding experiment has a GPU-free resource validation

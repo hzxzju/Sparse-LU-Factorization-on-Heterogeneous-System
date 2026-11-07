@@ -1,8 +1,10 @@
 #ifndef _NUMERIC_H_
 #define _NUMERIC_H_
 #include "symbolic.h"
+#include "stage_timing.h"
 #include <stdexcept>
 #include <string>
+#include <functional>
 
 using namespace std;
 
@@ -61,5 +63,36 @@ void LUonDevice(Symbolic_Matrix &, ostream &, ostream &, bool,
                 UpdateStrategy = UpdateStrategy::RightLooking,
                 SchedulingStrategy = SchedulingStrategy::Level,
                 unsigned sf_workers = 0, bool numeric_sm_padding = false);
+
+// One setup, optional warmup, then repeat factor/host-solve cycles. The callback
+// sees downloaded factors and must finish the solve/refinement before returning.
+void LUonDeviceRepeated(Symbolic_Matrix &, ostream &, ostream &, bool,
+                        UpdateStrategy, SchedulingStrategy, unsigned sf_workers,
+                        bool numeric_sm_padding, unsigned repeat,
+                        const std::function<void()> &solve);
+
+// CLI-only final teardown; library callers retain their runtime context.
+bool ShutdownGPUDevice(int device, ostream &errors);
+
+// Keep setup timings and only the final cycle; discard the warmup and earlier
+// cycles. All GPU work must be synchronized inside the iteration callback.
+inline void RunNumericIterations(unsigned repeat, const std::function<void()> &iteration)
+{
+    if (!repeat) throw std::invalid_argument("repeat must be positive");
+    GluTimings *timings = glu_timing::active();
+    GluTimings baseline;
+    if (timings) {
+        glu_timing_switch(timings, GLU_ANALYSIS_OTHER);
+        baseline = *timings;
+    }
+    const uint64_t cycles = uint64_t(repeat) + (repeat > 1 ? 1 : 0);
+    for (uint64_t cycle = 0; cycle < cycles; ++cycle) {
+        if (timings) {
+            *timings = baseline;
+            timings->boundary = glu_monotonic_now();
+        }
+        iteration();
+    }
+}
 
 #endif

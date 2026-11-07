@@ -24,8 +24,12 @@ LDLIBS += -lpthread -lm -lrt -ldl
 .PHONY: MAIN all clean distclean test-symbolic-gpu test-symbolic-host test-symbolic-auto test-symbolic-sf-gpu test-symbolic-sf-host test-gpu-device-selection test-ll-sf-host
 .DELETE_ON_ERROR:
 .PHONY: test-numeric-sm-padding-host
-MAIN: $(EXE)
+MAIN: $(EXE) ../bin/lu_cmd
 all: MAIN
+
+../bin/lu_cmd: $(EXE)
+	mkdir -p ../bin
+	ln -sf ../src/lu_cmd $@
 
 $(EXE): $(OBJS) $(PREPROCESS_LIBS) Makefile
 	$(HTCC) $(HTCC_GCC_FLAGS) $(LDFLAGS) $(OBJS) $(PREPROCESS_LIBS) $(LDLIBS) -o $@
@@ -122,6 +126,7 @@ nicslu/util/nicslu_util.a: $(wildcard nicslu/util/*.c nicslu/util/*.h nicslu/inc
 	$(MAKE) -C nicslu util
 
 clean:
+	rm -f ../bin/lu_cmd
 	rm -f gpu_idle_spin
 	rm -f numeric_sm_padding_host_test numeric_strategies_test test_numeric_strategies.o
 	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test symbolic_auto_test left_looking_sf_host_test

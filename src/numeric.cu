@@ -368,10 +368,20 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
                 UpdateStrategy update_strategy, SchedulingStrategy scheduling,
                 unsigned sf_workers, bool numeric_sm_padding)
 {
+    LUonDeviceRepeated(A_sym, out, err, PERTURB, update_strategy, scheduling,
+                       sf_workers, numeric_sm_padding, 1, std::function<void()>());
+}
+
+void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB,
+                        UpdateStrategy update_strategy, SchedulingStrategy scheduling,
+                        unsigned sf_workers, bool numeric_sm_padding, unsigned repeat,
+                        const std::function<void()> &solve)
+{
     glu_timing::Scope function_phase(GLU_ANALYSIS_OTHER);
     GluTimings *timings = glu_timing::active();
     try {
         ValidateNumericConfiguration(update_strategy, scheduling, numeric_sm_padding);
+        if (!repeat) throw std::invalid_argument("repeat must be positive");
     } catch (const std::invalid_argument &e) {
         err << e.what() << endl;
         return;
@@ -431,6 +441,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         glu_timing::Scope phase(GLU_CONTEXT_INIT);
         dev = glu_gpu::SelectDevice(A_sym.gpu_device, glu_gpu::DeviceRequirements(),
                                    deviceProp, out);
+        if (!hcCheck(hcDeviceSynchronize(), "hcDeviceSynchronize(context init)")) return;
     } catch (const std::runtime_error &e) {
         err << e.what() << endl;
         return;
@@ -492,7 +503,10 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     bool stream_created[Nstreams] = {false};
     NumericUtilScope numeric_util;
 
+    bool cleaned = false;
     auto cleanup = [&]() {
+        if (cleaned) return;
+        cleaned = true;
         glu_timing::Scope phase(GLU_CLEANUP);
         hcCheck(hcDeviceSynchronize(), "hcDeviceSynchronize(cleanup)");
         for (int j = 0; j < Nstreams; ++j) {
@@ -523,19 +537,27 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
             hcFree(done_dev);
         if (completed_workers_dev != nullptr)
             hcFree(completed_workers_dev);
+        hcCheck(hcDeviceSynchronize(), "hcDeviceSynchronize(cleanup completed)");
     };
+    // Also release device resources when host solve/refinement throws.
+    struct CleanupGuard {
+        const std::function<void()> release;
+        ~CleanupGuard() { release(); }
+    } cleanup_guard{cleanup};
+    struct NumericRuntimeError {};
 
 #define HC_RETURN_ON_ERR(call, op_name) \
     do { \
         if (!hcCheck((call), (op_name))) { \
             numeric_util.finish(1); \
-            cleanup(); \
-            return; \
+            throw NumericRuntimeError(); \
         } \
     } while (0)
 
+    try {
     gpu_timer.start();
     glu_timing_switch(timings, GLU_WORKSPACE_ALLOC);
+    const vector<REAL> original_values(A_sym.val);
 
     // hcMalloc allocations are SVM-accessible from host and device according
     // to the guide; data is still copied explicitly to preserve ownership flow.
@@ -556,11 +578,10 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         if (numeric_sm_padding) {
             HC_RETURN_ON_ERR(hcMalloc((void**)&completed_workers_dev, sizeof(unsigned)),
                              "hcMalloc(completed_workers_dev)");
-            HC_RETURN_ON_ERR(hcMemset(completed_workers_dev, 0, sizeof(unsigned)),
-                             "hcMemset(completed_workers_dev)");
         }
     }
 
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(workspace allocation)");
     glu_timing_switch(timings, GLU_PLAN_UPLOAD);
     // hcMemcpy is blocking in HTHPCC; each upload completes before kernels use it.
     HC_RETURN_ON_ERR(hcMemcpy(sym_c_ptr_dev, &(A_sym.sym_c_ptr[0]), (n + 1) * sizeof(unsigned), hcMemcpyHostToDevice),
@@ -568,10 +589,6 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     HC_RETURN_ON_ERR(hcMemcpy(sym_r_idx_dev, &(A_sym.sym_r_idx[0]), nnz * sizeof(unsigned), hcMemcpyHostToDevice),
         "hcMemcpy(sym_r_idx_dev)");
     HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(plan upload)");
-    glu_timing_switch(timings, GLU_VALUE_H2D);
-    HC_RETURN_ON_ERR(hcMemcpy(val_dev, &(A_sym.val[0]), nnz * sizeof(REAL), hcMemcpyHostToDevice), "hcMemcpy(val_dev)");
-    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(value H2D)");
-    glu_timing_switch(timings, GLU_PLAN_UPLOAD);
     HC_RETURN_ON_ERR(hcMemcpy(l_col_ptr_dev, &(A_sym.l_col_ptr[0]), n * sizeof(unsigned), hcMemcpyHostToDevice),
         "hcMemcpy(l_col_ptr_dev)");
     if (!left_looking) {
@@ -587,13 +604,6 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
             "hcMemcpy(level_idx_dev)");
     HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(plan upload)");
     glu_timing_switch(timings, GLU_WORKSPACE_ALLOC);
-    if (sync_free) {
-        // Default-stream initialization precedes the default-stream SF launch.
-        // These states are reset on every factorization, including reused CSC.
-        HC_RETURN_ON_ERR(hcMemset(next_col_dev, 0, sizeof(unsigned)), "hcMemset(next_col_dev)");
-        HC_RETURN_ON_ERR(hcMemset(done_dev, 0, size_t(n) * sizeof(unsigned)), "hcMemset(done_dev)");
-    }
-
     for (int j = 0; !left_looking && j < Nstreams; ++j) {
         HC_RETURN_ON_ERR(hcStreamCreate(&streams[j]), "hcStreamCreate");
         stream_created[j] = true;
@@ -661,11 +671,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         cleanup();
         return;
     }
-    // hcMalloc does not zero memory; clear explicitly to preserve CUDA semantics.
-    HC_RETURN_ON_ERR(hcMemset(tmpMem, 0, tmp_bytes), "hcMemset(tmpMem)");
-    // Drain initialization for every strategy before the compute-only timer.
-    // RL also needs this barrier before launching on its independent streams.
-    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem init)");
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem allocation)");
 
     glu_timing_switch(timings, GLU_PREPROCESS);
     // calculate 1-norm of A and perturbation value for perturbation
@@ -733,6 +739,24 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         }
     };
 
+    RunNumericIterations(repeat, [&]() {
+    // Restore all numeric state before every factorization, including warmup.
+    // Workspace initialization is separate from compute and value transfers.
+    glu_timing_switch(timings, GLU_WORKSPACE_ALLOC);
+    HC_RETURN_ON_ERR(hcMemset(tmpMem, 0, tmp_bytes), "hcMemset(tmpMem reset)");
+    if (sync_free) {
+        HC_RETURN_ON_ERR(hcMemset(next_col_dev, 0, sizeof(unsigned)), "hcMemset(next_col reset)");
+        HC_RETURN_ON_ERR(hcMemset(done_dev, 0, size_t(n) * sizeof(unsigned)), "hcMemset(done reset)");
+        if (numeric_sm_padding)
+            HC_RETURN_ON_ERR(hcMemset(completed_workers_dev, 0, sizeof(unsigned)),
+                             "hcMemset(completed_workers reset)");
+    }
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(numeric reset)");
+    // Only nonzero-value copies belong in value_h2d.
+    glu_timing_switch(timings, GLU_VALUE_H2D);
+    HC_RETURN_ON_ERR(hcMemcpy(val_dev, original_values.data(), nnz * sizeof(REAL), hcMemcpyHostToDevice),
+                     "hcMemcpy(original values)");
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(value H2D)");
     Timer numeric_timer;
     {
         glu_timing::Scope phase(GLU_LOGGING);
@@ -913,6 +937,29 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     if (err_find != 0)
         err << "LU data check: NaN/Inf found." << endl;
 #endif
+    if (solve) solve();
+    });
+    glu_timing_switch(timings, GLU_CLEANUP);
+    } catch (const NumericRuntimeError &) {
+        // hcCheck already reported the failing operation to the error stream.
+    }
     cleanup();
 #undef HC_RETURN_ON_ERR
+}
+
+bool ShutdownGPUDevice(int device, ostream &errors)
+{
+    if (device < 0) return true;
+    glu_timing::Scope phase(GLU_CLEANUP);
+    auto check = [&](hcError_t status, const char *operation) {
+        if (status == hcSuccess) return true;
+        errors << operation << " failed with HTHPCC status " << static_cast<int>(status) << endl;
+        return false;
+    };
+    if (!check(hcSetDevice(device), "hcSetDevice(shutdown)")) return false;
+    const bool synchronized = check(hcDeviceSynchronize(), "hcDeviceSynchronize(shutdown)");
+    // Reset is the final runtime operation: synchronizing afterwards would
+    // create a new context after the one whose lifetime we are measuring.
+    const bool reset = check(hcDeviceReset(), "hcDeviceReset");
+    return synchronized && reset;
 }

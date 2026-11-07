@@ -1,5 +1,11 @@
 # 批量运行矩阵
 
+默认单矩阵评测入口是 `bin/lu_cmd -i <matrix.mtx>`，无需 CPU 参考文件；本批处理脚本
+额外显式启用参考解对比。完整二进制格式、阶段归属和 `--repeat [N]`（已支持，默认 1）见
+[README](../README.md#task-1-命令输出与计时)。`--repeat` 仅用于 S3：N>1 时复用一次性准备和
+GPU 工作区，先预热一次再运行 N 轮，每轮恢复原始数值；最终输出和计时取最后一轮。
+批量正确性/耗时脚本不传入 `--repeat`。
+
 本机单卡 Docker 环境的进入方式与当前 GPU 验收状态见
 [GPU_Docker_Experiment.md](../docs/GPU_Docker_Experiment.md)。
 可在主机用 `bash src/gpu_docker.sh shell` 进入容器后执行下面的命令。
@@ -23,7 +29,8 @@ python3 src/run_batch.py
 
 - `summary.csv`：每个矩阵一行，包含矩阵信息、运行配置、各阶段耗时、总求解时间、GPU/CPU 的绝对及相对 L2 解误差、三种 Ax-b 残差和运行状态，共 30 列；`symbolic_backend` 记录请求的符号后端，实际回退见日志；`numeric_sm_padding` 为实验开关（0/1，默认 0）。
 - `0001_<矩阵名>/solver.log`：该矩阵的完整标准输出和错误输出。
-- `0001_<矩阵名>/x.dat`：该矩阵的解向量，由求解器生成。
+- `0001_<矩阵名>/x.bin`：规定的小端 int64 长度 + float64 解向量，CSV 的 `solution_path` 指向此文件。
+- `0001_<矩阵名>/x.dat`：显式 CPU 对比模式额外保留的高精度文本解。
 
 `total_solve_ms` 是加权后的毫秒数，由 cleanup 后的最终汇总行计算：
 
@@ -45,7 +52,7 @@ CSV 新增 `once_s`、`solve_s`、`post_s` 三列，单位为秒；`post_s` 不�
 | `solve_s` | `value_h2d`、`numeric_factor`、`triangular_solve`、`solution_d2h`、`refinement`、`sync` |
 | `post_s` | `residual_check`、`output_write`、`logging` |
 
-所有阶段使用 `clock_gettime(CLOCK_MONOTONIC, ...)`；参考解读取与比较期间暂停计时。GPU 阶段先同步再停表，
+所有阶段使用 `clock_gettime(CLOCK_MONOTONIC, ...)`；显式参考解读取与比较计入 `post_s` 的 `residual_check`。GPU 阶段先同步再停表，
 已随阶段计入的同步不会重复累加到 `sync`。当前无显式运行时编译，`kernel_compile=0`。
 CPU 负责三角求解，`solution_d2h=0`。LU 因子回传及 CPU 求解路径的排列/缩放、
 精度转换计入 `refinement`；日志中的 `factor_d2h_s` 是其中一个子项，不能再次累加。
@@ -68,17 +75,17 @@ CPU 负责三角求解，`solution_d2h=0`。LU 因子回传及 CPU 求解路径�
 
 `symbolic_preparation_time` 与其子阶段有重叠，不能一起累加。
 
-每次 GLU 求解完成后，读取仓库已有的 CPU KLU 解
+批处理脚本显式传入 `--cpu-reference`，每次 GLU 求解完成后读取仓库已有的 CPU KLU 解
 `src/KLU_standalone/test_result/<矩阵名>_x.txt`，不重新运行 KLU，也不改写参考文件。
 两份解必须对应原始矩阵和相同的 `b=ones(n)`。这里 `x_GPU` 指 GLU 的最终解
-（GPU 分解、CPU 三角求解以及可选精化）。读取和比较时暂停所有阶段计时，
-不计入 `once_s`、`solve_s`、`post_s` 或加权 `total_solve_ms`。
+（GPU 分解、CPU 三角求解以及可选精化）。读取和比较计入 `post_s`，
+不计入 `once_s`、`solve_s` 或加权 `total_solve_ms`。默认单矩阵命令不读取 CPU 参考解。
 参考文件缺失、长度错误、包含非有限数或非法内容时明确报错，不能作为成功结果。
 
 | CSV 列 | 定义 |
 | --- | --- |
-| `solution_error_l2` | `||x_GPU-x_CPU||₂`，用于 `--residual-tol` 达标判断 |
-| `relative_solution_error_l2` | `||x_GPU-x_CPU||₂ / ||x_CPU||₂`，仅报告 |
+| `solution_error_l2` | `||x_GPU-x_CPU||₂`，仅报告 |
+| `relative_solution_error_l2` | `||x_GPU-x_CPU||₂ / ||x_CPU||₂`，用于 `--residual-tol` 达标判断，默认不超过 `1e-6` |
 | `axb_residual_l1` | `||Ax_GPU-b||₁`，辅助验算 |
 | `axb_residual_l2` | `||Ax_GPU-b||₂`，辅助验算 |
 | `axb_residual_linf` | `||Ax_GPU-b||∞`，辅助验算 |
@@ -94,7 +101,7 @@ CPU 负责三角求解，`solution_d2h=0`。LU 因子回传及 CPU 求解路径�
 python3 src/run_batch.py
 # 指定其他已有 CPU 参考解目录
 python3 src/run_batch.py --cpu-reference-dir /path/to/cpu_results
-# 单矩阵显式指定参考解；缺省时按 lu_cmd 所在目录定位 KLU_standalone/test_result
+# 单矩阵显式指定参考解；省略此参数时不读取参考文件
 ./src/lu_cmd -i src/matrix/add32_csr.mtx --cpu-reference src/KLU_standalone/test_result/add32_csr_x.txt
 ```
 
@@ -111,7 +118,7 @@ occupancy，并改用 cooperative launch。
 求解工作。`Total GPU time` 使用单调墙钟，仍是包含式诊断区间。
 `Iterative refinement time (CPU)` 是 `RefineCSR` 调用区间，新的 `refinement_s`
 另外包含 CPU 求解路径准备开销。CSV 共 30 列，精化迭代次数、初始/逐轮残差及
-最终状态保存在 `solver.log`；最终 `x.dat` 写入、独立残差验算和日志属于 `post_s`。
+最终状态保存在 `solver.log`；最终 `x.bin` / 可选 `x.dat` 写入、独立残差验算和日志属于 `post_s`。
 
 单独运行求解器会直接输出阶段耗时，例如：
 
@@ -147,9 +154,9 @@ python3 src/run_batch.py --matrix-dir src/matrix \
 失败、超时、缺失指标或非有限指标都会记入 CSV，并继续运行下一个矩阵。
 CSV 每完成一个矩阵就写入磁盘。全部矩阵的求解和指标检查通过时脚本返回 0，
 任何矩阵求解失败、残差不达标、超时或指标检查失败时返回 1，
-Ctrl+C 中断时返回 130。`status=ok` 表示进程正常退出、所有指标有效且绝对 GPU/CPU L2 解误差不超过指定阈值，
-相对 L2 解误差仅报告。求解器退出码 2 或绝对解误差超标记为
-`status=residual_not_converged`，批量运行继续；保留的最好解仍写入 `x.dat`。
+Ctrl+C 中断时返回 130。`status=ok` 表示进程正常退出、所有指标有效且相对 GPU/CPU L2 解误差不超过指定阈值，
+绝对 L2 解误差仅报告。求解器退出码 2 或相对解误差超标记为
+`status=residual_not_converged`，批量运行继续；保留的最好解仍写入 `x.bin` 和诊断文本 `x.dat`。
 
 ## 数值分解 SM 空转实验（默认关闭）
 
@@ -409,11 +416,11 @@ GPU 测试覆盖逐元素 CSC、CSR/values/levels、三种 CTA 大小、小池�
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `--residual-tol T` | `1e-6` | 有限正数；绝对 GPU/CPU L2 解误差阈值，同时用于内部 Ax-b 精化停止条件 |
+| `--residual-tol T` | `1e-6` | 有限正数；相对 GPU/CPU L2 解误差阈值，同时用于内部绝对 Ax-b L2 残差的精化停止条件 |
 | `--max-refine-iters N` | `n` | 最大校正次数；`n` 表示矩阵阶数，或指定 0～4294967295 的整数 |
 
 ```sh
-# 最多校正 10 次，最终目标为 ||x_GPU-x_CPU||₂ <= 1e-6
+# 最多校正 10 次，最终目标为 ||x_GPU-x_CPU||₂ / ||x_CPU||₂ <= 1e-6
 python3 src/run_batch.py --residual-tol 1e-6 --max-refine-iters 10
 
 # 使用默认的矩阵阶数作为上限
@@ -429,7 +436,7 @@ python3 src/run_batch.py --residual-tol 1e-6 --max-refine-iters 10
 GPU LU 因子保持复用，不重新分解。每轮检查候选解，达到阈值或用完上限即停止。
 残差不下降时提前停止（`stagnated`），非有限数值时停止（`nonfinite`）；拒绝这些
 候选更新并保留此前最好解。最终状态还包括 `converged` 和 `max_iterations`。
-精化状态与最终解误差状态独立：最终 GPU/CPU 绝对 L2 解误差超标返回 2，
+精化状态与最终解误差状态独立：最终 GPU/CPU 相对 L2 解误差超标返回 2，
 不能保证任意病态矩阵都能通过增加精化次数达到解误差目标。
 
 迭代增加 CPU 残差计算、三角求解、向量更新耗时及 O(n) 临时内存。

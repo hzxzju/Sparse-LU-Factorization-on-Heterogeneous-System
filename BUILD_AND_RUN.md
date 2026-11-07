@@ -95,8 +95,8 @@ python3 src/run_batch.py --cpu-reference-dir src/KLU_standalone/test_result
 ```
 
 `--residual-tol` defaults to `1e-6` (finite and positive). Exit code 0 means the
-absolute GPU/CPU L2 error meets this tolerance; 2 means it misses the target.
-Relative L2 error is reported separately and is not the acceptance criterion.
+relative GPU/CPU L2 error `||x_GPU-x_CPU||₂ / ||x_CPU||₂` is at most this
+tolerance; 2 means it exceeds the target. Absolute L2 error is reported separately.
 For a zero CPU vector, relative error is 0 if both solutions are zero and
 infinity otherwise. Batch CSV has 29 columns: `solution_error_l2` and
 `relative_solution_error_l2` hold solution errors; `axb_residual_l1`,
