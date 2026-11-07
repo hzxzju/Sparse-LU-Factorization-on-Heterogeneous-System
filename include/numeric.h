@@ -10,6 +10,19 @@ using namespace std;
 
 enum class UpdateStrategy { RightLooking, LeftLooking };
 enum class SchedulingStrategy { Level, SynchronizationFree };
+enum class SFUpdateStrategy { Block, Wave };
+
+inline SFUpdateStrategy ParseSFUpdateStrategy(const std::string &name)
+{
+    if (name == "block") return SFUpdateStrategy::Block;
+    if (name == "wave") return SFUpdateStrategy::Wave;
+    throw std::invalid_argument("sf_update must be 'block' or 'wave'");
+}
+
+inline const char *SFUpdateStrategyName(SFUpdateStrategy strategy)
+{
+    return strategy == SFUpdateStrategy::Wave ? "wave" : "block";
+}
 
 inline UpdateStrategy ParseUpdateStrategy(const std::string &name)
 {
@@ -44,7 +57,7 @@ inline const char *SchedulingStrategyName(SchedulingStrategy scheduling)
 
 inline void ValidateNumericConfiguration(UpdateStrategy strategy,
                                          SchedulingStrategy scheduling,
-                                         bool numeric_sm_padding = false)
+                                         SFUpdateStrategy sf_update = SFUpdateStrategy::Block)
 {
     if (strategy != UpdateStrategy::RightLooking && strategy != UpdateStrategy::LeftLooking)
         throw std::invalid_argument("Invalid numeric update strategy");
@@ -54,21 +67,23 @@ inline void ValidateNumericConfiguration(UpdateStrategy strategy,
     if (scheduling == SchedulingStrategy::SynchronizationFree &&
         strategy != UpdateStrategy::LeftLooking)
         throw std::invalid_argument("synchronization-free scheduling requires left-looking updates");
-    if (numeric_sm_padding && (strategy != UpdateStrategy::LeftLooking ||
-                              scheduling != SchedulingStrategy::SynchronizationFree))
-        throw std::invalid_argument("numeric SM padding requires left-looking synchronization-free scheduling");
+    if (sf_update != SFUpdateStrategy::Block && sf_update != SFUpdateStrategy::Wave)
+        throw std::invalid_argument("Invalid SF update strategy");
+    if (sf_update == SFUpdateStrategy::Wave &&
+        (strategy != UpdateStrategy::LeftLooking || scheduling != SchedulingStrategy::SynchronizationFree))
+        throw std::invalid_argument("sf_update wave requires left-looking synchronization-free scheduling");
 }
 
 void LUonDevice(Symbolic_Matrix &, ostream &, ostream &, bool,
-                UpdateStrategy = UpdateStrategy::RightLooking,
-                SchedulingStrategy = SchedulingStrategy::Level,
-                unsigned sf_workers = 0, bool numeric_sm_padding = false);
+                UpdateStrategy = UpdateStrategy::LeftLooking,
+                SchedulingStrategy = SchedulingStrategy::SynchronizationFree,
+                unsigned sf_workers = 0, SFUpdateStrategy sf_update = SFUpdateStrategy::Block);
 
 // One setup, optional warmup, then repeat factor/host-solve cycles. The callback
 // sees downloaded factors and must finish the solve/refinement before returning.
 void LUonDeviceRepeated(Symbolic_Matrix &, ostream &, ostream &, bool,
                         UpdateStrategy, SchedulingStrategy, unsigned sf_workers,
-                        bool numeric_sm_padding, unsigned repeat,
+                        SFUpdateStrategy sf_update, unsigned repeat,
                         const std::function<void()> &solve);
 
 // CLI-only final teardown; library callers retain their runtime context.

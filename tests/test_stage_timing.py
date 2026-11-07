@@ -26,8 +26,10 @@ void Symbolic_Matrix::fill_in(unsigned *ai, unsigned *ap, const SymbolicConfig &
 }
 
 void LUonDeviceRepeated(Symbolic_Matrix &a, std::ostream &out, std::ostream &, bool,
-                       UpdateStrategy, SchedulingStrategy, unsigned, bool,
+                       UpdateStrategy update, SchedulingStrategy scheduling, unsigned, SFUpdateStrategy sf_update,
                        unsigned repeat, const std::function<void()> &solve) {
+    ValidateNumericConfiguration(update, scheduling, sf_update);
+    out << "fixture sf_update=" << SFUpdateStrategyName(sf_update) << '\n';
     const std::vector<REAL> original = a.val;
     unsigned cycle = 0;
     RunNumericIterations(repeat, [&]() {
@@ -147,6 +149,31 @@ class StageTimingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr.count("fixture numeric cycle="), 1)
         self.assertEqual(self.read_solution()[0], expected)
+
+    def test_sf_update_selection_preserves_final_output_and_repeat(self):
+        default = self.run_solver()
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertIn("fixture sf_update=block", default.stderr)
+        expected, _ = self.read_solution()
+        for mode in ("block", "wave"):
+            for repeat in ("1", "2"):
+                result = self.run_solver("--sf-update", mode, "--repeat", repeat)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("fixture sf_update=" + mode, result.stderr)
+                self.assertEqual(self.read_solution()[0], expected)
+                self.assertEqual(result.stderr.count("fixture numeric cycle="),
+                                 1 if repeat == "1" else 3)
+                self.assertFalse((self.directory / "x.dat").exists())
+
+    def test_invalid_sf_update_and_removed_padding_fail_before_numeric(self):
+        for options in (("--sf-update",), ("--sf-update", "invalid"),
+                        ("--sf-update", "wave", "-s", "level"),
+                        ("--sf-update", "wave", "-u", "right-looking", "-s", "level"),
+                        ("--numeric-sm-padding",)):
+            result = self.run_solver(*options)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("fixture numeric cycle=", result.stderr)
+            self.assertFalse((self.directory / "x.bin").exists())
 
     def test_repeat_warmup_and_final_cycle_accounting(self):
         self.assertEqual(self.run_solver().returncode, 0)

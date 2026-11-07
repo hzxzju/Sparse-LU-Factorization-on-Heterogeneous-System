@@ -46,6 +46,11 @@ inline unsigned fetch_next_column(unsigned *next) {
 inline unsigned load_done_acquire(unsigned *done) {
     return __atomic_load_n(done, __ATOMIC_ACQUIRE);
 }
+inline void wait_column_ready(unsigned *done) {
+    if (threadIdx.x == 0)
+        while (load_done_acquire(done) == 0u) {}
+    __sync_threads();
+}
 inline void publish_column_done(unsigned *done) {
     __sync_threads();
     if (threadIdx.x == 0) __atomic_store_n(done, 1u, __ATOMIC_RELEASE);
@@ -55,7 +60,7 @@ inline void publish_column_done(unsigned *done) {
 #include "../src/left_looking_sf.cuh"
 
 static void run_case(const char *name, const std::vector<REAL> &a, unsigned n,
-                     unsigned lanes, bool perturb = false)
+                     unsigned lanes, bool perturb, bool wave)
 {
     std::vector<unsigned> rows, ptr(1, 0);
     std::vector<double> values;
@@ -105,10 +110,14 @@ static void run_case(const char *name, const std::vector<REAL> &a, unsigned n,
                 blockIdx.x = 0;
                 blockDim.x = lanes;
                 active_barrier = &barrier;
-                LL_factorizeSyncFree(sym.sym_c_ptr.data(), sym.sym_r_idx.data(),
-                                     sym.val.data(), sym.l_col_ptr.data(),
-                                     workspace.data() + 1, &next, done.data(), n,
-                                     perturb, threshold);
+                if (wave)
+                    LL_factorizeSyncFree<true>(sym.sym_c_ptr.data(), sym.sym_r_idx.data(),
+                        sym.val.data(), sym.l_col_ptr.data(), workspace.data() + 1,
+                        &next, done.data(), n, perturb, threshold);
+                else
+                    LL_factorizeSyncFree<>(sym.sym_c_ptr.data(), sym.sym_r_idx.data(),
+                        sym.val.data(), sym.l_col_ptr.data(), workspace.data() + 1,
+                        &next, done.data(), n, perturb, threshold);
             });
         }
         for (auto &thread : threads) thread.join();
@@ -129,7 +138,8 @@ static void run_case(const char *name, const std::vector<REAL> &a, unsigned n,
             }
         }
     }
-    std::cout << "PASS " << name << ", block threads=" << lanes << std::endl;
+    std::cout << "PASS " << name << ", update=" << (wave ? "wave" : "block")
+              << ", block threads=" << lanes << std::endl;
 }
 
 int main()
@@ -150,11 +160,12 @@ int main()
             }
             dense[i*n+i] = 1 + sum;
         }
+        for (bool wave : {false, true})
         for (unsigned lanes : {64u, 128u, 256u}) {
-            run_case("dense-search-boundaries", dense, n, lanes);
-            run_case("sparse-fill-in", {4,0,2,0,1,3,0,1,0,2,5,0,1,0,1,4}, 4, lanes);
-            run_case("empty-L", {2,1,2,0,3,1,0,0,4}, 3, lanes);
-            run_case("perturbed-pivot", {1,1,2,1,1,2,2,2,5}, 3, lanes, true);
+            run_case("dense-search-boundaries", dense, n, lanes, false, wave);
+            run_case("sparse-fill-in", {4,0,2,0,1,3,0,1,0,2,5,0,1,0,1,4}, 4, lanes, false, wave);
+            run_case("empty-L", {2,1,2,0,3,1,0,0,4}, 3, lanes, false, wave);
+            run_case("perturbed-pivot", {1,1,2,1,1,2,2,2,5}, 3, lanes, true, wave);
         }
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

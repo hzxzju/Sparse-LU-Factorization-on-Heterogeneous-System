@@ -166,6 +166,4 @@ python3 -m unittest discover -s tests -p 'test_kernel_util.py' -v
 
 测试需要本地 Unix socket 权限，使用模拟 ht-smi、hcTracer 和 runtime。
 
-独立的全 SM 五秒空转实验见 [GPU_Idle_Spin_Util.md](GPU_Idle_Spin_Util.md)。
-该实验使用 `phase=gpu_idle_spin`，有效加权值写入通用列 `gpu_util_pct`；数值分解
-阶段的该列与兼容列 `numeric_util_pct` 相同，空转阶段的 `numeric_util_pct` 留空。
+SM 空转实验已移除；采样仅用于实际数值 LU 工作。

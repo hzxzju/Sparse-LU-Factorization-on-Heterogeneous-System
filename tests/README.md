@@ -1,6 +1,8 @@
 # Numeric strategy regression checks
 
-LL-SF uses one native 64-lane wave per predecessor, with only the first 24
+LL-SF defaults to `--sf-update block`: a whole CTA applies each predecessor
+in order. `--sf-update wave` selects one native 64-lane wave per predecessor,
+with only the first 24
 lanes searching its L column. The CTA retains its original thread count
 (normally 256); rows advance in sorted order so each U value is complete before
 later rows consume it. Search stripes have stride 64; active lane `l` searches
@@ -14,7 +16,8 @@ make -C src test-ll-sf-host DEBUG=0
 This runs the production kernel with one simulated CTA and host replacements
 for device barriers/atomics. It compares sparse fill-in, empty L, pivot
 perturbation and a dense 66-column case against independent dense elimination,
-using 64/128/256 threads and two runs with reset flags and dirty workspace.
+using both block/wave strategies, 64/128/256 threads and two runs with reset
+flags and dirty workspace.
 The dense case covers search lengths around 24, 48 and 64 and repeated predecessor
 batches. This does not validate GPU memory scope, inter-CTA progress or speed;
 the real GPU numeric and publication tests below are still required for those.
@@ -253,18 +256,13 @@ factors against a single cold factorization, including SF counter/workspace rese
 Batch cases reject duplicate/missing timing summaries,
 nonfinite/negative values, and ignore historical unweighted total-time labels.
 
-The opt-in numeric SM padding experiment has a GPU-free resource validation
-target and a cooperative-launch numerical regression:
+The GPU numeric driver checks both block and wave updates with one/automatic/three
+workers, including warmup/repeat and refactorization. The CLI host fixture also
+checks default/explicit block, wave selection, invalid combinations, binary
+output and the exact stdout protocol for both modes. Removed SM padding options
+are rejected before numeric execution.
 
 ```sh
-make -C src test-numeric-sm-padding-host numeric_strategies_test
-timeout -k 3s 180s ./src/numeric_strategies_test --sm-padding
+make -C src numeric_strategies_test
+timeout -k 3s 180s ./src/numeric_strategies_test
 ```
-
-The optional flag adds 1/3/49/automatic compute-worker configurations to all 17
-cases, including repeated factorization with different values. It requires
-cooperative launch and exactly one resident block per SM after shared-memory
-reservation; unsupported hardware is a failure for this explicit acceptance run.
-Ordinary regression runs keep the experiment disabled. See
-[RUN_BATCH.md](../src/RUN_BATCH.md) for the default-off runtime switch, workspace
-layout, completion protocol, and timing/metric interpretation.

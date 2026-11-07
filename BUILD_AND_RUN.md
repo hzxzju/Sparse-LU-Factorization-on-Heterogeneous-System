@@ -52,7 +52,7 @@ is written to `x.dat` in the terminal's current directory and the residual norms
 are printed. To use your own matrix, replace the example path with its actual
 path relative to the current directory, or an absolute path.
 
-`-u` / `--update-strategy` selects `right-looking` (default) or `left-looking`.
+`-u` / `--update-strategy` selects `right-looking` or `left-looking` (default).
 Aliases `right`/`rl` and `left`/`ll` are accepted. `-p` enables the same static
 diagonal perturbation for either strategy. The selected strategy is printed by
 the GPU backend.
@@ -64,7 +64,15 @@ from the repository root:
 ./src/lu_cmd -i src/nicslu/demo/ASIC_100k.mtx -u left-looking --scheduling synchronization-free
 ```
 
-`-s` / `--scheduling` accepts `level` (default) or `synchronization-free`.
+`-s` / `--scheduling` accepts `level` or `synchronization-free` (default).
+The default numeric configuration is LL-SF. For right-looking updates, pass
+`-u right-looking -s level`.
+`--sf-update block|wave` selects numeric LL-SF predecessor updates. The default
+`block` restores the original whole-CTA update; `wave` retains 24 active search
+lanes per 64-lane wave and search stride 64. Block size, Task 1 output, binary
+solution layout and repeat accounting are identical. CLI, batch and Python
+(`sf_update="block"` / `"wave"`) support the choice. SM padding has been removed.
+
 SF requires LL and skips CPU level generation and GPU level/CSR uploads.
 The CPU still generates fill-in, symbolic CSC/CSR and initial numeric values.
 

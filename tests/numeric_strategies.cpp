@@ -8,7 +8,6 @@
 
 // Exercise the production symbolic phase, strategy dispatcher and GPU kernels.
 // The dense CPU reference deliberately uses an independent elimination order.
-static bool test_sm_padding = false;
 static std::vector<REAL> dense_reference(std::vector<REAL> a, unsigned n, bool perturb)
 {
     REAL norm = 0;
@@ -45,18 +44,20 @@ static REAL run_case(const char *name, const std::vector<REAL> &a, unsigned n,
     const std::vector<REAL> reference = dense_reference(a, n, perturb);
     std::vector<REAL> previous;
     REAL worst = 0;
-    struct Mode { UpdateStrategy strategy; SchedulingStrategy scheduling; unsigned workers; bool padding; };
-    std::vector<Mode> modes = {
-        {UpdateStrategy::RightLooking, SchedulingStrategy::Level, 0, false},
-        {UpdateStrategy::LeftLooking, SchedulingStrategy::Level, 0, false},
-        {UpdateStrategy::LeftLooking, SchedulingStrategy::SynchronizationFree, 1, false},
-        {UpdateStrategy::LeftLooking, SchedulingStrategy::SynchronizationFree, 0, false},
-        {UpdateStrategy::LeftLooking, SchedulingStrategy::SynchronizationFree, 3, false}
+    struct Mode {
+        UpdateStrategy strategy;
+        SchedulingStrategy scheduling;
+        unsigned workers;
+        SFUpdateStrategy sf_update;
     };
-    if (test_sm_padding)
-        for (unsigned workers : {1u, 3u, 49u, 0u})
+    std::vector<Mode> modes = {
+        {UpdateStrategy::RightLooking, SchedulingStrategy::Level, 0, SFUpdateStrategy::Block},
+        {UpdateStrategy::LeftLooking, SchedulingStrategy::Level, 0, SFUpdateStrategy::Block}
+    };
+    for (SFUpdateStrategy sf_update : {SFUpdateStrategy::Block, SFUpdateStrategy::Wave})
+        for (unsigned workers : {1u, 0u, 3u})
             modes.push_back({UpdateStrategy::LeftLooking, SchedulingStrategy::SynchronizationFree,
-                             workers, true});
+                             workers, sf_update});
     for (const Mode &mode : modes) {
         const UpdateStrategy strategy = mode.strategy;
         std::ostringstream out, err;
@@ -68,7 +69,7 @@ static REAL run_case(const char *name, const std::vector<REAL> &a, unsigned n,
         sym.predictLU(rows.data(), ptr.data(), values.data());
         if (mode.scheduling == SchedulingStrategy::Level)
             sym.leveling();
-        LUonDevice(sym, out, err, perturb, strategy, mode.scheduling, mode.workers, mode.padding);
+        LUonDevice(sym, out, err, perturb, strategy, mode.scheduling, mode.workers, mode.sf_update);
         if (!err.str().empty()) throw std::runtime_error(err.str());
         // Exercise the CLI's persistent-device loop: warmup + two cycles must
         // restore values, workspace, SF tickets and completion flags each time.
@@ -76,7 +77,7 @@ static REAL run_case(const char *name, const std::vector<REAL> &a, unsigned n,
         sym.predictLU(rows.data(), ptr.data(), values.data());
         unsigned cycles = 0;
         LUonDeviceRepeated(sym, out, err, perturb, strategy, mode.scheduling,
-                           mode.workers, mode.padding, 2, [&]() {
+                           mode.workers, mode.sf_update, 2, [&]() {
             ++cycles;
             for (unsigned p = 0; p < sym.nnz; ++p)
                 if (!std::isfinite(sym.val[p]) ||
@@ -86,8 +87,6 @@ static REAL run_case(const char *name, const std::vector<REAL> &a, unsigned n,
         });
         if (cycles != 3 || !err.str().empty())
             throw std::runtime_error(std::string(name) + ": numeric repeat cycle count/error " + err.str());
-        if (mode.padding && out.str().find("resident_blocks_per_sm=1") == std::string::npos)
-            throw std::runtime_error("numeric SM padding did not use the cooperative grid");
         if (mode.scheduling == SchedulingStrategy::SynchronizationFree) {
             // Repeat on the same symbolic structure and different input values.
             // CPU symbolic structure is reusable, device done/counter are not.
@@ -98,7 +97,7 @@ static REAL run_case(const char *name, const std::vector<REAL> &a, unsigned n,
                 const REAL scale = repeat == 0 ? 1.5 : 0.75;
                 for (double &value : scaled) value *= scale;
                 sym.predictLU(rows.data(), ptr.data(), scaled.data());
-                LUonDevice(sym, out, err, perturb, strategy, mode.scheduling, mode.workers, mode.padding);
+                LUonDevice(sym, out, err, perturb, strategy, mode.scheduling, mode.workers, mode.sf_update);
                 for (unsigned k = 0; k < n; ++k) {
                     for (unsigned p = sym.sym_c_ptr[k]; p < sym.sym_c_ptr[k + 1]; ++p) {
                         const REAL expected = first_factors[p] *
@@ -193,11 +192,9 @@ static std::vector<REAL> independent_blocks(unsigned blocks)
     return a;
 }
 
-int main(int argc, char **argv)
+int main()
 {
     try {
-        if (argc == 2 && std::string(argv[1]) == "--sm-padding") test_sm_padding = true;
-        else if (argc != 1) throw std::invalid_argument("usage: numeric_strategies_test [--sm-padding]");
         for (const char *alias : {"left-looking", "left", "ll"})
             if (ParseUpdateStrategy(alias) != UpdateStrategy::LeftLooking) return 1;
         for (const char *alias : {"right-looking", "right", "rl"})
@@ -262,9 +259,7 @@ int main(int argc, char **argv)
             const std::string name = "random-diagonally-dominant-" + std::to_string(n);
             run_case(name.c_str(), a, n);
         }
-        std::cout << "All 17 numeric cases passed (RL-level, LL-level and three LL-SF worker counts).\n";
-        if (test_sm_padding)
-            std::cout << "SM padding passed with 1/3/49/automatic workers and repeated factorizations.\n";
+        std::cout << "All 17 numeric cases passed (RL-level, LL-level and block/wave LL-SF at three worker counts).\n";
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';
         return 1;

@@ -82,11 +82,12 @@ print(lu.diagnostics)      # symbolic timing, pools, parks, merges and numeric d
 
 `splu` accepts any scipy sparse matrix (any format) or a raw `(data, indices, indptr, shape)` tuple in CSC format. GLU's `REAL` type is `double`; the Python interface accepts and returns float64 arrays.
 
-`update_strategy` defaults to `"right-looking"`; `"left-looking"` selects the
+`update_strategy` defaults to `"left-looking"`, which selects the
 column-owned kernel in `src/left_looking.cuh`. The aliases `"right"`/`"rl"` and
 `"left"`/`"ll"` are accepted. Both strategies default to automatic CPU/GPU-SF symbolic selection
-and use the same diagonal perturbation rule. `scheduling="level"` remains the default;
+and use the same diagonal perturbation rule. `scheduling="synchronization-free"` is the default (LL-SF);
 `scheduling="synchronization-free"` is supported only with left-looking updates.
+For right-looking updates, explicitly set `update_strategy="right-looking", scheduling="level"`.
 Left-looking collects
 previous L-column contributions into the current column before dividing by its
 pivot; it does not broadcast updates into future columns. Rebuild the extension
@@ -198,6 +199,20 @@ once_s=7.767300 solve_s=0.555000 post_s=0.020000
 CPU 求解路径的排列/缩放、精度转换计入 `refinement`，不冒充解向量回传。
 各 GPU 阶段末尾已包含同步，`sync=0`；无显式运行时编译，`kernel_compile=0`。
 最终残差检查、输出和日志计入 `post_s`；即使最后才发生的资源释放仍计入 `once_s`。
+
+### LL-SF 前驱更新开关
+
+默认使用 block 更新策略，可显式切换：
+
+```sh
+bin/lu_cmd -i <matrix.mtx> --sf-update block
+bin/lu_cmd -i <matrix.mtx> --sf-update wave
+```
+
+`block` 恢复整个 block 顺序处理每个前驱列的策略；`wave` 保留每 wave 24 个
+搜索线程、条带步长 64。两者 block 线程数不变，均适用于 `--repeat`；
+`wave` 要求 LL-SF。默认最终提交命令、`x.bin` 与 stdout 计时格式不变。
+SM 空转实验模块和开关已移除，不再启动占位 block。
 
 ### S3 循环（已支持，默认 N=1）
 

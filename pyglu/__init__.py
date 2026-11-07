@@ -62,11 +62,11 @@ def _to_csc_arrays(A):
     return data, indices, indptr, n
 
 
-def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", *,
+def splu(A, perturb=False, update_strategy="left-looking", scheduling="synchronization-free", *,
          sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
          symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
          symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0,
-         numeric_sm_padding=False):
+         sf_update="block"):
     """Compute the sparse LU factorization of A on the GPU.
 
     Parameters
@@ -76,16 +76,17 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
     perturb : bool, optional
         Enable diagonal perturbation (GESP) to handle near-singular pivots.
     update_strategy : {"right-looking", "left-looking"}, optional
-        Numeric update strategy. Default "right-looking". The aliases
+        Numeric update strategy. Default "left-looking". The aliases
         "right"/"rl" and "left"/"ll" are also accepted.
     scheduling : {"level", "synchronization-free"}, optional
-        Default "level". Synchronization-free scheduling requires left-looking
+        Default "synchronization-free". Synchronization-free scheduling requires left-looking
         updates. Independent of the symbolic backend.
     sf_workers : int, optional
         Numeric SF worker limit; 0 selects automatically. Requires SF scheduling.
-    numeric_sm_padding : bool, optional
-        Experimental LL-SF grid with one block per SM and idle padding workers.
-        Default False. Pads activity counters and may change execution time.
+    sf_update : {"block", "wave"}, optional
+        LL-SF predecessor update strategy. Default "block"; "wave" uses 24
+        active lanes per native wave with search stride 64. Requires LL-SF
+        when set to "wave".
     symbolic_backend : {"auto", "cpu", "gpu", "gpu-sf"}, optional
         Default "auto" selects GPU-SF when n >= 20000, max column nnz / n >=
         0.1, max column nnz / mean column nnz >= 64, and
@@ -137,14 +138,14 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
         symbolic_verify=symbolic_verify, symbolic_no_fallback=symbolic_no_fallback,
         symbolic_sf_workers=symbolic_sf_workers, symbolic_pool_entries=symbolic_pool_entries,
         symbolic_max_pool_entries=symbolic_max_pool_entries,
-        numeric_sm_padding=numeric_sm_padding)
+        sf_update=sf_update)
 
 
-def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="level", *,
+def spsolve(A, b, perturb=False, update_strategy="left-looking", scheduling="synchronization-free", *,
             sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
             symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
             symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0,
-            numeric_sm_padding=False):
+            sf_update="block"):
     """Solve the sparse linear system Ax = b on the GPU.
 
     Parameters
@@ -156,12 +157,12 @@ def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="le
     perturb : bool, optional
         Enable diagonal perturbation. Default False.
     update_strategy : {"right-looking", "left-looking"}, optional
-        Numeric update strategy. Default "right-looking".
+        Numeric update strategy. Default "left-looking".
     scheduling : {"level", "synchronization-free"}, optional
-        Numeric scheduling. Default "level"; synchronization-free requires LL.
+        Numeric scheduling. Default "synchronization-free"; synchronization-free requires LL.
     sf_workers, symbolic_backend, symbolic_batch_cols, symbolic_block_size,
     symbolic_verify, symbolic_no_fallback, symbolic_sf_workers,
-    symbolic_pool_entries, symbolic_max_pool_entries, numeric_sm_padding : optional
+    symbolic_pool_entries, symbolic_max_pool_entries, sf_update : optional
         Same keyword-only options and defaults as :func:`splu`.
 
     Returns
@@ -182,7 +183,7 @@ def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="le
                 symbolic_no_fallback=symbolic_no_fallback, symbolic_sf_workers=symbolic_sf_workers,
                 symbolic_pool_entries=symbolic_pool_entries,
                 symbolic_max_pool_entries=symbolic_max_pool_entries,
-                numeric_sm_padding=numeric_sm_padding).solve(b)
+                sf_update=sf_update).solve(b)
 
 
 __all__ = ["splu", "spsolve", "GLUFactorization"]

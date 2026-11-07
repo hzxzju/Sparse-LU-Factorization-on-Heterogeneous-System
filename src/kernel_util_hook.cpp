@@ -77,7 +77,7 @@ void Mark(const std::string &name, long long &before, long long &after)
 
 extern "C" void *glu_gpu_util_begin(const char *bdf, const char *name)
 {
-    if (!name || (std::strcmp(name, "numeric_lu_compute") && std::strcmp(name, "gpu_idle_spin"))) {
+    if (!name || std::strcmp(name, "numeric_lu_compute")) {
         errno = EINVAL; Fail("unsupported GPU utilization phase");
     }
     const char *path = std::getenv("GLU_NUMERIC_UTIL_SOCKET");

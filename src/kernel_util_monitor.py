@@ -242,7 +242,7 @@ class Monitor:
         connection.settimeout(0.2)
         begin, buffer = self.line(connection, b"")
         if (len(begin) != 5 or begin[0] != "BEGIN" or
-                begin[4] not in ("numeric_lu_compute", "gpu_idle_spin")):
+                begin[4] != "numeric_lu_compute"):
             raise RuntimeError("invalid BEGIN request")
         _, pid, phase_id, runtime_bdf, name = begin
         if self.bdf.lower() != runtime_bdf.lower():

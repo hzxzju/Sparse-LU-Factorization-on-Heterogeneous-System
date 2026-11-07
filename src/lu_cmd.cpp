@@ -26,10 +26,10 @@ void help_message()
     cerr << "--repeat [N] (default: 1; N > 1 runs one uncounted warmup then N factor/solve cycles, S3 only)" << endl;
     cerr << "Additional usage: ./lu_cmd -i inputfile -p" << endl;
     cerr << "-p to enable perturbation" << endl;
-    cerr << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
-    cerr << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
+    cerr << "-u, --update-strategy right-looking|left-looking (default: left-looking)" << endl;
+    cerr << "-s, --scheduling level|synchronization-free (default: synchronization-free; SF requires LL)" << endl;
     cerr << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
-    cerr << "--numeric-sm-padding (experimental; default off; requires LL-SF)" << endl;
+    cerr << "--sf-update block|wave (default: block; wave requires LL-SF)" << endl;
     cerr << "--symbolic-backend auto|cpu|gpu|gpu-sf (default: auto; CPU/GPU-SF selected by input structure)" << endl;
     cerr << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
     cerr << "--symbolic-sf-workers N (default: 0 = automatic; requires auto or gpu-sf)" << endl;
@@ -57,12 +57,12 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
     bool progress = false;
     unsigned repeat = 1;
     unsigned sf_workers = 0;
-    bool numeric_sm_padding = false;
+    SFUpdateStrategy sf_update = SFUpdateStrategy::Block;
     double residual_tolerance = 1e-6;
     unsigned max_refine_iters = 0;
     bool refine_limit_is_order = true;
-    UpdateStrategy update_strategy = UpdateStrategy::RightLooking;
-    SchedulingStrategy scheduling = SchedulingStrategy::Level;
+    UpdateStrategy update_strategy = UpdateStrategy::LeftLooking;
+    SchedulingStrategy scheduling = SchedulingStrategy::SynchronizationFree;
     SymbolicConfig symbolic_config;
 
     double *ax = NULL, *ax_backup = NULL;
@@ -117,9 +117,15 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
             progress = true;
             i += 1;
         }
-        else if (strcmp(argv[i], "--numeric-sm-padding") == 0) {
-            numeric_sm_padding = true;
-            i += 1;
+        else if (strcmp(argv[i], "--sf-update") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            try {
+                sf_update = ParseSFUpdateStrategy(argv[i + 1]);
+            } catch (const std::invalid_argument &e) {
+                cerr << e.what() << endl;
+                return -1;
+            }
+            i += 2;
         }
         else if (strcmp(argv[i], "--symbolic-backend") == 0) {
             if (i + 1 >= argc) { help_message(); return -1; }
@@ -258,7 +264,7 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
     }
 
     try {
-        ValidateNumericConfiguration(update_strategy, scheduling, numeric_sm_padding);
+        ValidateNumericConfiguration(update_strategy, scheduling, sf_update);
         ValidateSymbolicConfiguration(symbolic_config);
         if (sf_workers && scheduling != SchedulingStrategy::SynchronizationFree)
             throw std::invalid_argument("--sf-workers requires synchronization-free scheduling");
@@ -362,7 +368,7 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
         Timer factor_timer;
         factor_timer.start();
         LUonDeviceRepeated(A_sym, diagnostics, errors, PERTURB, update_strategy, scheduling,
-                           sf_workers, numeric_sm_padding, repeat, [&]() {
+                           sf_workers, sf_update, repeat, [&]() {
             factor_timer.elapsedWallclockTime(numeric_ms);
             if (!numeric_errors.str().empty())
                 throw std::runtime_error(numeric_errors.str());

@@ -18,7 +18,8 @@ python3 src/run_batch.py
 ```
 
 默认递归查找 `src/matrix` 下全部 `.mtx`，按路径顺序逐个运行。默认使用
-`right-looking` 和 `level`，不开启扰动。初次求解后自动检查绝对残差
+`left-looking` 和 `synchronization-free`（LL-SF），不开启扰动。
+如需 right-looking，请同时指定 `--update-strategy right-looking --scheduling level`。初次求解后自动检查绝对残差
 `||Ax-b||₂ <= 1e-6`，未达标时复用 LU 因子迭代校正，默认最多 n 次
 （n 为矩阵阶数）。程序统计各阶段耗时，不执行逐 kernel profiler 采集。
 矩阵目录和求解器默认路径相对于脚本，
@@ -27,7 +28,7 @@ python3 src/run_batch.py
 
 结果写入 `src/batch_results/<运行时间>/`：
 
-- `summary.csv`：每个矩阵一行，包含矩阵信息、运行配置、各阶段耗时、总求解时间、GPU/CPU 的绝对及相对 L2 解误差、三种 Ax-b 残差和运行状态，共 30 列；`symbolic_backend` 记录请求的符号后端，实际回退见日志；`numeric_sm_padding` 为实验开关（0/1，默认 0）。
+- `summary.csv`：每个矩阵一行，包含矩阵信息、运行配置、各阶段耗时、总求解时间、GPU/CPU 的绝对及相对 L2 解误差、三种 Ax-b 残差和运行状态，共 30 列；`symbolic_backend` 记录请求的符号后端，实际回退见日志；`sf_update` 记录 LL-SF 前驱更新策略（block/wave，默认 block）。
 - `0001_<矩阵名>/solver.log`：该矩阵的完整标准输出和错误输出。
 - `0001_<矩阵名>/x.bin`：规定的小端 int64 长度 + float64 解向量，CSV 的 `solution_path` 指向此文件。
 - `0001_<矩阵名>/x.dat`：显式 CPU 对比模式额外保留的高精度文本解。
@@ -110,8 +111,6 @@ python3 src/run_batch.py --cpu-reference-dir /path/to/cpu_results
 默认模式下所有 RL、LL、LL-SF kernel 均直接启动，不再查询 occupancy、kernel 资源属性或
 CE/RM 计数器，也不逐次测量 kernel 耗时或写入采集文件。RL 小层继续使用多流执行，
 仅保留算法和结果正确性所需的同步，不再为逐 kernel 采集额外串行化启动。
-显式开启下述 `--numeric-sm-padding` 实验时例外：启动前查询一次 kernel 属性和
-occupancy，并改用 cooperative launch。
 
 求解器日志仍输出 `Numeric LU compute time (wall-clock)`，对应数值 LU 的启动、
 执行和同步耗时；`numeric_lu_time` 则覆盖整个 GPU 数值调用，混合一次性准备与
@@ -158,80 +157,37 @@ Ctrl+C 中断时返回 130。`status=ok` 表示进程正常退出、所有指标
 绝对 L2 解误差仅报告。求解器退出码 2 或相对解误差超标记为
 `status=residual_not_converged`，批量运行继续；保留的最好解仍写入 `x.bin` 和诊断文本 `x.dat`。
 
-## 数值分解 SM 空转实验（默认关闭）
+## LL-SF 前驱更新策略
 
-新增 `--numeric-sm-padding`，仅支持 `left-looking + synchronization-free`。
-求解器和批量脚本均可使用；不加此参数时保持原有启动、工作区预算和计算路径，
-不查询该实验的 occupancy，也不分配完成计数器。与 RL 或 level 调度组合时直接拒绝。
-
-```sh
-make -C src MAIN
-
-# 普通对照：显式固定计算 worker 上限，便于与实验组比较。
-./src/lu_cmd -i src/matrix/ASIC_680ks_csr.mtx -u left-looking \
-  -s synchronization-free --sf-workers 49 --symbolic-backend cpu
-
-# 实验组：保留相同的计算 worker 上限，增加其余 SM 的空转 block。
-./src/lu_cmd -i src/matrix/ASIC_680ks_csr.mtx -u left-looking \
-  -s synchronization-free --sf-workers 49 --symbolic-backend cpu --numeric-sm-padding
-
-# 批量实验，开关写入 summary.csv 的 numeric_sm_padding 列。
-python3 src/run_batch.py --update-strategy left-looking \
-  --scheduling synchronization-free --sf-workers 49 --numeric-sm-padding \
-  --timeout 600
-```
-
-Python 扩展重建后也支持：
-`pyglu.splu(A, update_strategy="left-looking", scheduling="synchronization-free", numeric_sm_padding=True)`；
-`spsolve` 支持同一 keyword-only 参数，默认 `False`。
-
-### 布局、工作区与退出
-
-- grid block 数等于所选设备的 SM/MP 数，不固定为 104，也不固定为 256。
-- 计算 worker 的上限仍由 `--sf-workers`（0 为自动）、n 和原有工作区预算决定，
-  实验模式额外封顶为 SM 数；分配失败时仍减半重试。自动模式可能比普通 LL-SF 少，
-  因此性能对照建议显式设置相同的 `--sf-workers`。
-- 只为实际计算 worker 分配 `compute_workers × n × sizeof(REAL)` 字节列工作区。
-  计算 block 使用紧凑的 `[0, compute_workers)` 工作区编号；空转 block 不访问列工作区、
-  不领取列任务。计算 worker 复用原 LL-SF 的同一个 device 函数，列任务领取、前驱等待、
-  算术及完成发布顺序不变。额外设备状态只有一个每次分解清零的 unsigned 完成计数器。
-- 每 block 预留 `sharedMemPerMultiprocessor / 2 + 256` 字节动态共享内存，连同静态共享
-  内存检查设备限制，再查询 `hcOccupancyMaxActiveBlocksPerMultiprocessor`，必须恰为 1。
-  X201 的 64 KiB/SM 对应 33,024 字节动态预留。然后通过
-  `hcLaunchCooperativeKernel` 启动共同驻留的 grid；共享内存预留不用于列数据。
-- 计算 worker 耗尽任务后，先由 block barrier 汇合所有线程，再用 device-scope
-  acquire/release 原子操作递增完成计数；随后也进入等待。所有 block 的 leader
-  acquire 轮询，计数等于实际计算 worker 数时全体退出。停止通知由 GPU 发出，
-  不依赖主机在 `hcDeviceSynchronize()` 之后发通知。
-- 不支持 cooperative launch、共享内存不足、occupancy 不是 1 或启动失败时明确报错，
-  不静默退回普通启动，避免把失败的实验当成成功。日志中的 `Numeric SM padding:`
-  记录实际 grid、计算/空转 worker 数、动态共享内存、驻留数和列工作区字节数。
-
-例如设备有 104 个 SM、实际计算 worker 为 49 时，启动 104 个 block，其中 49 个
-计算、55 个空转；列工作区仍是 49 份。若所有 SM 都分配到计算 worker，则空转 block
-数为 0，先完成的计算 worker 仍等待其余 worker 完成后一起退出。
-
-这是主动增加设备活动的实验，会影响 util 观测；不代表有效计算量增加，也不保证
-运行时间不变。需同时比较 `Numeric LU compute time (wall-clock)`、`numeric_lu_time`、
-`total_solve_ms` 和残差。计算计时包含空转、完成通知和全 grid 退出，分配、初始化及
-资源查询计入完整数值分解调用。采样仍按 [Kernel_Util_Profiling.md](../docs/Kernel_Util_Profiling.md)
-执行，短窗口及硬件指标刷新限制仍然存在。
-
-不访问 GPU 的资源配置测试，以及需要 GPU 的数值回归：
+`--sf-update block|wave` 默认为 `block`。它控制数值 LL-SF 的前驱更新粒度，
+与 `--symbolic-backend`、`--sf-workers` 独立。默认数值配置为 LL-SF，因而
+最终提交命令无需额外参数即可使用 block 策略：
 
 ```sh
-make -C src test-numeric-sm-padding-host numeric_strategies_test
-timeout -k 3s 180s ./src/numeric_strategies_test --sm-padding
+make MAIN
+bin/lu_cmd -i <matrix.mtx>
+bin/lu_cmd -i <matrix.mtx> --sf-update block
+bin/lu_cmd -i <matrix.mtx> --sf-update wave
+bin/lu_cmd -i <matrix.mtx> --sf-update wave --repeat 3
 ```
 
-GPU 回归将实验的 1/3/49/自动 worker 配置与 CPU 分解和普通 RL/LL/LL-SF 对照，
-覆盖空转 block、多列依赖、扰动，以及同一符号结构的重复数值分解。
+- `block`：恢复原策略，整个 block 按前驱列顺序等待并更新当前列；行更新步长
+  为 `blockDim.x`，前一个前驱的贡献完成后再读取后一个 `U(k,j)`。
+- `wave`：当前列按行顺序推进，每个原生 64 线程 wave 负责一个前驱列；每 wave
+  保留 24 个搜索线程、搜索条带步长 64，并覆盖全部条带起点后归约贡献。
+- 两种策略使用同一 worker 数量、列工作区预算和 block 线程配置（通常 256）。
+  `--sf-update wave` 仅允许与 `left-looking + synchronization-free` 组合。
+- 单次和 `--repeat` 路径均应用所选策略；默认不预热，N>1 的复用、重置及最后
+  一轮计时规则沿用 Task 1 协议。策略诊断写入 stderr，stdout 汇总行与 `x.bin`
+  二进制格式不变，不依赖 CPU 参考文件。
 
-2026-10-30 已在 `glu-gpu3`（物理 GPU 3，容器逻辑设备 0）通过上述 17 组 GPU
-回归。实际 `add32_csr.mtx` 求解也通过：104 个 block、49 个计算 worker、55 个空转
-worker，列工作区 1,944,320 字节，最终残差 L2 约 `1.60e-13`，退出码 0。
-主机资源配置测试通过；Python 回归共 54 项，50 项通过，4 项因缺少 NumPy/原生
-扩展而跳过。尚未进行 util 增幅或运行时间不变的性能验收。
+批量脚本接受同一 `--sf-update` 参数，`summary.csv` 保留 30 列，原实验配置列
+替换为 `sf_update`。Python `splu` / `spsolve` 对应 keyword-only 参数
+`sf_update="block"` 或 `sf_update="wave"`；C++ 对应 `SFUpdateStrategy`。
+
+SM 占位空转 kernel、独立空转程序及 `--numeric-sm-padding` 已删除；所有 worker
+只执行求解工作，数值 worker 耗尽任务后立即退出，不为占满 SM 安排额外 block。
+算法正确性所需的前驱等待和完成发布保留。
 
 ## GPU 符号分析 SF（2026-10-26）
 
@@ -331,7 +287,7 @@ queue capacity 上限为 `2^29`，ticket 在 `INT_MAX-capacity` 前停止并报�
 
 ### 计时、访存代理与性能对照
 
-`solver.log` 新增以下 SF 指标，`summary.csv` 共 30 列，含请求的 `symbolic_backend` 和 `numeric_sm_padding`：
+`solver.log` 新增以下 SF 指标，`summary.csv` 共 30 列，含请求的 `symbolic_backend` 和 `sf_update`：
 
 | 指标 | 范围/含义 |
 | --- | --- |

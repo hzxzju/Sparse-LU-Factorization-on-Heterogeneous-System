@@ -39,7 +39,7 @@ public:
         unsigned symbolic_sf_workers,
         unsigned symbolic_pool_entries,
         unsigned symbolic_max_pool_entries,
-        bool numeric_sm_padding);
+        const std::string &sf_update);
 
     GLUFactorization(const GLUFactorization &) = delete;
     GLUFactorization &operator=(const GLUFactorization &) = delete;
@@ -67,8 +67,8 @@ private:
     std::unique_ptr<SNicsLU, NicsLUDeleter> m_nicslu;
     std::unique_ptr<Symbolic_Matrix> m_sym;
     unsigned          m_n      = 0;
-    UpdateStrategy    m_update_strategy = UpdateStrategy::RightLooking;
-    SchedulingStrategy m_scheduling = SchedulingStrategy::Level;
+    UpdateStrategy    m_update_strategy = UpdateStrategy::LeftLooking;
+    SchedulingStrategy m_scheduling = SchedulingStrategy::SynchronizationFree;
 };
 
 
@@ -89,11 +89,12 @@ GLUFactorization::GLUFactorization(
     unsigned symbolic_sf_workers,
     unsigned symbolic_pool_entries,
     unsigned symbolic_max_pool_entries,
-    bool numeric_sm_padding)
+    const std::string &sf_update)
 {
     m_update_strategy = ParseUpdateStrategy(update_strategy);
     m_scheduling = ParseSchedulingStrategy(scheduling);
-    ValidateNumericConfiguration(m_update_strategy, m_scheduling, numeric_sm_padding);
+    const SFUpdateStrategy sf_update_strategy = ParseSFUpdateStrategy(sf_update);
+    ValidateNumericConfiguration(m_update_strategy, m_scheduling, sf_update_strategy);
     if (sf_workers && m_scheduling != SchedulingStrategy::SynchronizationFree)
         throw std::invalid_argument("sf_workers requires synchronization-free scheduling");
     SymbolicConfig symbolic_config;
@@ -183,7 +184,7 @@ GLUFactorization::GLUFactorization(
 
     /* GPU factorization — overwrites m_sym->val with LU factors */
     LUonDevice(*m_sym, m_out, m_err, perturb, m_update_strategy, m_scheduling,
-               sf_workers, numeric_sm_padding);
+               sf_workers, sf_update_strategy);
 
     /* Surface device-factorization errors reported by the GPU backend. */
     std::string err_msg = m_err.str();
@@ -243,14 +244,14 @@ PYBIND11_MODULE(_pyglu, m) {
                 unsigned,
                 const std::string &,
                 unsigned, unsigned, bool, bool,
-                unsigned, unsigned, unsigned, bool>(),
+                unsigned, unsigned, unsigned, const std::string &>(),
             py::arg("data"),
             py::arg("indices"),
             py::arg("indptr"),
             py::arg("n"),
             py::arg("perturb") = false,
-            py::arg("update_strategy") = "right-looking",
-            py::arg("scheduling") = "level",
+            py::arg("update_strategy") = "left-looking",
+            py::arg("scheduling") = "synchronization-free",
             py::kw_only(),
             py::arg("sf_workers") = 0,
             py::arg("symbolic_backend") = "auto",
@@ -261,7 +262,7 @@ PYBIND11_MODULE(_pyglu, m) {
             py::arg("symbolic_sf_workers") = 0,
             py::arg("symbolic_pool_entries") = 0,
             py::arg("symbolic_max_pool_entries") = 0,
-            py::arg("numeric_sm_padding") = false,
+            py::arg("sf_update") = "block",
             R"(Factorize a sparse matrix given in CSC format.
 
             Parameters
@@ -271,8 +272,8 @@ PYBIND11_MODULE(_pyglu, m) {
             indptr  : ndarray, int32, shape (n+1,)   — column pointers
             n       : int                            — matrix dimension
             perturb : bool                           — enable GESP perturbation
-            update_strategy : str                    — right-looking or left-looking
-            scheduling : str                         -- level or synchronization-free (LL only)
+            update_strategy : str                    — right-looking or left-looking (default)
+            scheduling : str                         -- level or synchronization-free (default; LL only)
             sf_workers : int                         -- numeric SF workers; 0 = automatic
             symbolic_backend : str                   -- auto (default), cpu, gpu (graph), or gpu-sf
             symbolic_batch_cols : int                -- graph GPU workspace slots
@@ -282,7 +283,7 @@ PYBIND11_MODULE(_pyglu, m) {
             symbolic_sf_workers : int                -- symbolic SF workers; 0 = automatic
             symbolic_pool_entries : int              -- initial SF arena size; 0 = automatic
             symbolic_max_pool_entries : int          -- SF arena cap; 0 = memory budget
-            numeric_sm_padding : bool                -- experimental LL-SF SM activity padding; default off
+            sf_update : str                          -- block (default) or wave; wave requires LL-SF
             )")
         .def("solve", &GLUFactorization::solve, py::arg("b"),
             R"(Solve Ax = b.

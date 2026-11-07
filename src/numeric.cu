@@ -6,8 +6,6 @@
 #include "gpu_device.h"
 #include "left_looking.cuh"
 #include "left_looking_sf.cuh"
-#include "numeric_sm_padding.h"
-#include "numeric_sm_padding.cuh"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -366,21 +364,21 @@ __global__ void RL_onecol_cleartmpMem(
 
 void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB,
                 UpdateStrategy update_strategy, SchedulingStrategy scheduling,
-                unsigned sf_workers, bool numeric_sm_padding)
+                unsigned sf_workers, SFUpdateStrategy sf_update)
 {
     LUonDeviceRepeated(A_sym, out, err, PERTURB, update_strategy, scheduling,
-                       sf_workers, numeric_sm_padding, 1, std::function<void()>());
+                       sf_workers, sf_update, 1, std::function<void()>());
 }
 
 void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB,
                         UpdateStrategy update_strategy, SchedulingStrategy scheduling,
-                        unsigned sf_workers, bool numeric_sm_padding, unsigned repeat,
+                        unsigned sf_workers, SFUpdateStrategy sf_update, unsigned repeat,
                         const std::function<void()> &solve)
 {
     glu_timing::Scope function_phase(GLU_ANALYSIS_OTHER);
     GluTimings *timings = glu_timing::active();
     try {
-        ValidateNumericConfiguration(update_strategy, scheduling, numeric_sm_padding);
+        ValidateNumericConfiguration(update_strategy, scheduling, sf_update);
         if (!repeat) throw std::invalid_argument("repeat must be positive");
     } catch (const std::invalid_argument &e) {
         err << e.what() << endl;
@@ -459,41 +457,11 @@ void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool
     out << "Numeric update strategy: " << UpdateStrategyName(update_strategy) << endl;
     out << "Numeric scheduling: " << SchedulingStrategyName(scheduling) << endl;
 
-    NumericSmPaddingPlan padding_plan = {};
-    if (numeric_sm_padding) {
-        hcFuncAttributes attributes = {};
-        if (!hcCheck(hcFuncGetAttributes(&attributes,
-                         reinterpret_cast<const void *>(LL_factorizeSyncFreeSmPadding)),
-                     "numeric SM padding kernel attributes")) return;
-        try {
-            padding_plan = MakeNumericSmPaddingPlan(deviceProp.cooperativeLaunch != 0,
-                deviceProp.multiProcessorCount, deviceProp.maxGridSize[0],
-                deviceProp.sharedMemPerMultiprocessor, deviceProp.sharedMemPerBlock,
-                attributes.sharedSizeBytes);
-        } catch (const std::invalid_argument &e) {
-            err << e.what() << endl;
-            return;
-        }
-        int resident_blocks = 0;
-        const int threads = std::min(maxWaveAlignedThreads,
-                                     static_cast<int>(glu_sf::ll_max_block_threads));
-        if (!hcCheck(hcOccupancyMaxActiveBlocksPerMultiprocessor(&resident_blocks,
-                         reinterpret_cast<const void *>(LL_factorizeSyncFreeSmPadding),
-                         threads, padding_plan.dynamic_shared_bytes),
-                     "numeric SM padding occupancy")) return;
-        if (resident_blocks != 1) {
-            err << "numeric SM padding requires exactly one resident block/SM; runtime reports "
-                << resident_blocks << endl;
-            return;
-        }
-    }
-
     unsigned *sym_c_ptr_dev = nullptr, *sym_r_idx_dev = nullptr, *l_col_ptr_dev = nullptr;
     REAL *val_dev = nullptr;
     unsigned *csr_r_ptr_dev = nullptr, *csr_c_idx_dev = nullptr, *csr_diag_ptr_dev = nullptr;
     int *level_idx_dev = nullptr;
     unsigned *next_col_dev = nullptr, *done_dev = nullptr;
-    unsigned *completed_workers_dev = nullptr;
     REAL *tmpMem = nullptr;
     double time = 0.0;
     Timer gpu_timer;
@@ -535,8 +503,6 @@ void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool
             hcFree(next_col_dev);
         if (done_dev != nullptr)
             hcFree(done_dev);
-        if (completed_workers_dev != nullptr)
-            hcFree(completed_workers_dev);
         hcCheck(hcDeviceSynchronize(), "hcDeviceSynchronize(cleanup completed)");
     };
     // Also release device resources when host solve/refinement throws.
@@ -575,10 +541,6 @@ void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool
     else {
         HC_RETURN_ON_ERR(hcMalloc((void**)&next_col_dev, sizeof(unsigned)), "hcMalloc(next_col_dev)");
         HC_RETURN_ON_ERR(hcMalloc((void**)&done_dev, size_t(n) * sizeof(unsigned)), "hcMalloc(done_dev)");
-        if (numeric_sm_padding) {
-            HC_RETURN_ON_ERR(hcMalloc((void**)&completed_workers_dev, sizeof(unsigned)),
-                             "hcMalloc(completed_workers_dev)");
-        }
     }
 
     HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(workspace allocation)");
@@ -629,8 +591,6 @@ void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool
         const size_t mp_count = deviceProp.multiProcessorCount > 0
             ? static_cast<size_t>(deviceProp.multiProcessorCount) : 1;
         size_t requested = sf_workers ? sf_workers : 2 * mp_count;
-        if (numeric_sm_padding)
-            requested = std::min<size_t>(requested, padding_plan.grid_blocks);
         const size_t workspace_budget = std::min<size_t>(256u * 1024u * 1024u,
                                                         deviceProp.totalGlobalMem / 16);
         const size_t budget_slots = std::max<size_t>(1, workspace_budget / (size_t(n) * sizeof(REAL)));
@@ -747,9 +707,6 @@ void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool
     if (sync_free) {
         HC_RETURN_ON_ERR(hcMemset(next_col_dev, 0, sizeof(unsigned)), "hcMemset(next_col reset)");
         HC_RETURN_ON_ERR(hcMemset(done_dev, 0, size_t(n) * sizeof(unsigned)), "hcMemset(done reset)");
-        if (numeric_sm_padding)
-            HC_RETURN_ON_ERR(hcMemset(completed_workers_dev, 0, sizeof(unsigned)),
-                             "hcMemset(completed_workers reset)");
     }
     HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(numeric reset)");
     // Only nonzero-value copies belong in value_h2d.
@@ -770,36 +727,21 @@ void LUonDeviceRepeated(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool
         const unsigned ll_threads = static_cast<unsigned>(maxWaveAlignedThreads) < glu_sf::ll_max_block_threads
             ? static_cast<unsigned>(maxWaveAlignedThreads) : glu_sf::ll_max_block_threads;
         out << "LL-SF workers: " << TMPMEMNUM << ", workspace bytes: " << tmp_bytes << endl;
-        out << "LL-SF threads/block: " << ll_threads
-            << ", waves/block: " << ll_threads / glu_sf::ll_wave_size
-            << ", search threads/wave: " << glu_sf::ll_search_lanes
-            << ", search stripe stride: " << glu_sf::ll_search_stride << endl;
+        out << "LL-SF predecessor update: " << SFUpdateStrategyName(sf_update)
+            << ", threads/block: " << ll_threads << endl;
+        if (sf_update == SFUpdateStrategy::Wave)
+            out << "LL-SF waves/block: " << ll_threads / glu_sf::ll_wave_size
+                << ", search threads/wave: " << glu_sf::ll_search_lanes
+                << ", search stripe stride: " << glu_sf::ll_search_stride << endl;
         out << "LL-SF kernel launch; waiting for completion..." << endl;
-        if (numeric_sm_padding) {
-            out << "Numeric SM padding: grid_blocks=" << padding_plan.grid_blocks
-                << " compute_workers=" << TMPMEMNUM
-                << " idle_workers=" << padding_plan.grid_blocks - TMPMEMNUM
-                << " dynamic_shared_bytes=" << padding_plan.dynamic_shared_bytes
-                << " resident_blocks_per_sm=1 workspace_bytes=" << tmp_bytes << endl;
-            // The cooperative grid has one block/SM, but only TMPMEMNUM blocks
-            // own workspaces. Keep argument storage alive until launch returns.
-            void *arguments[] = {&sym_c_ptr_dev, &sym_r_idx_dev, &val_dev, &l_col_ptr_dev,
-                                 &tmpMem, &next_col_dev, &done_dev, &n, &PERTURB, &pert,
-                                 &TMPMEMNUM, &completed_workers_dev};
-            HC_RETURN_ON_ERR(hcLaunchCooperativeKernel(
-                reinterpret_cast<const void *>(LL_factorizeSyncFreeSmPadding),
-                dim3(padding_plan.grid_blocks), dim3(ll_threads), arguments,
-                static_cast<unsigned>(padding_plan.dynamic_shared_bytes), nullptr),
-                "numeric SM padding cooperative launch");
+        if (sf_update == SFUpdateStrategy::Wave) {
+            LL_factorizeSyncFree<true><<<TMPMEMNUM, ll_threads>>>(sym_c_ptr_dev,
+                sym_r_idx_dev, val_dev, l_col_ptr_dev, tmpMem, next_col_dev,
+                done_dev, n, PERTURB, pert);
         } else {
-            LL_factorizeSyncFree<<<TMPMEMNUM, ll_threads>>>(sym_c_ptr_dev,
-                                                      sym_r_idx_dev,
-                                                      val_dev,
-                                                      l_col_ptr_dev,
-                                                      tmpMem,
-                                                      next_col_dev,
-                                                      done_dev,
-                                                      n, PERTURB, pert);
+            LL_factorizeSyncFree<false><<<TMPMEMNUM, ll_threads>>>(sym_c_ptr_dev,
+                sym_r_idx_dev, val_dev, l_col_ptr_dev, tmpMem, next_col_dev,
+                done_dev, n, PERTURB, pert);
         }
         HC_RETURN_ON_ERR(hcGetLastError(), "LL-SF kernel launch");
         HC_RETURN_ON_ERR(hcDeviceSynchronize(), "LL-SF completion");

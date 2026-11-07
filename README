@@ -70,6 +70,20 @@ CPU 求解路径的排列/缩放、精度转换计入 `refinement`，不冒充�
 各 GPU 阶段末尾已包含同步，`sync=0`；无显式运行时编译，`kernel_compile=0`。
 最终残差检查、输出和日志计入 `post_s`；即使最后才发生的资源释放仍计入 `once_s`。
 
+### LL-SF 前驱更新开关
+
+默认使用 block 更新策略，可显式切换：
+
+```sh
+bin/lu_cmd -i <matrix.mtx> --sf-update block
+bin/lu_cmd -i <matrix.mtx> --sf-update wave
+```
+
+`block` 恢复整个 block 顺序处理每个前驱列的策略；`wave` 保留每 wave 24 个
+搜索线程、条带步长 64。两者 block 线程数不变，均适用于 `--repeat`；
+`wave` 要求 LL-SF。默认最终提交命令、`x.bin` 与 stdout 计时格式不变。
+SM 空转实验模块和开关已移除，不再启动占位 block。
+
 ### S3 循环（已支持，默认 N=1）
 
 ```sh

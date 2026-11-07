@@ -35,21 +35,22 @@ class ParameterTests(unittest.TestCase):
             spec.loader.exec_module(self.module)
         self.matrix = ([2.0, 3.0], [0, 1], [0, 1, 2], (2, 2))
 
-    def test_default_keeps_right_looking(self):
+    def test_default_uses_left_looking_sync_free(self):
         self.module.splu(self.matrix)
-        self.assertEqual(self.factorization.call_args[0][-3:], (False, "right-looking", "level"))
+        self.assertEqual(self.factorization.call_args[0][-3:], (False, "left-looking", "synchronization-free"))
         self.assertEqual(self.factorization.call_args[1], dict(
             sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
             symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
             symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0,
-            numeric_sm_padding=False))
+            sf_update="block"))
 
     def test_left_looking_with_perturbation(self):
         self.module.splu(self.matrix, perturb=True, update_strategy="left-looking")
-        self.assertEqual(self.factorization.call_args[0][-3:], (True, "left-looking", "level"))
+        self.assertEqual(self.factorization.call_args[0][-3:], (True, "left-looking", "synchronization-free"))
 
     def test_default_spsolve_uses_auto_symbolic(self):
         self.module.spsolve(self.matrix, [4, 6])
+        self.assertEqual(self.factorization.call_args[0][-3:], (False, "left-looking", "synchronization-free"))
         self.assertEqual(self.factorization.call_args[1]["symbolic_backend"], "auto")
 
     def test_explicit_cpu_overrides_auto(self):
@@ -65,11 +66,11 @@ class ParameterTests(unittest.TestCase):
 
     def test_alias_reaches_native_parser(self):
         self.module.splu(self.matrix, update_strategy="ll")
-        self.assertEqual(self.factorization.call_args[0][-2:], ("ll", "level"))
+        self.assertEqual(self.factorization.call_args[0][-2:], ("ll", "synchronization-free"))
 
     def test_spsolve_forwards_strategy_and_rhs(self):
         result = self.module.spsolve(self.matrix, [4, 6], True, "left-looking")
-        self.assertEqual(self.factorization.call_args[0][-3:], (True, "left-looking", "level"))
+        self.assertEqual(self.factorization.call_args[0][-3:], (True, "left-looking", "synchronization-free"))
         self.assertEqual(list(self.factorization.return_value.solve.call_args[0][0]), [4., 6.])
         self.assertIs(result, self.factorization.return_value.solve.return_value)
 
@@ -88,7 +89,7 @@ class ParameterTests(unittest.TestCase):
         options = dict(sf_workers=1, symbolic_backend="gpu-sf", symbolic_batch_cols=3,
                        symbolic_block_size=64, symbolic_verify=True, symbolic_no_fallback=True,
                        symbolic_sf_workers=2, symbolic_pool_entries=1, symbolic_max_pool_entries=128,
-                       numeric_sm_padding=True)
+                       sf_update="wave")
         self.module.splu(self.matrix, update_strategy="ll", scheduling="synchronization-free", **options)
         factor_args, factor_kwargs = self.factorization.call_args
         self.assertEqual(factor_kwargs, options)
@@ -103,7 +104,8 @@ class ParameterTests(unittest.TestCase):
         self.factorization.assert_not_called()
 
     def test_symbolic_is_independent_of_numeric_scheduling(self):
-        self.module.splu(self.matrix, symbolic_backend="gpu-sf", symbolic_sf_workers=2)
+        self.module.splu(self.matrix, update_strategy="right-looking", scheduling="level",
+                         symbolic_backend="gpu-sf", symbolic_sf_workers=2)
         self.assertEqual(self.factorization.call_args[0][-2:], ("right-looking", "level"))
         self.assertEqual(self.factorization.call_args[1]["symbolic_backend"], "gpu-sf")
 

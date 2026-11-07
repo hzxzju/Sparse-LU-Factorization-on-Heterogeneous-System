@@ -215,7 +215,7 @@ int main(int argc, char **argv) {
     hcDeviceSynchronize();
     if (argc > 1 && std::strcmp(argv[1], "no-phase") == 0) return 0;
     NumericUtilScope phase;
-    phase.start(0, argc > 1 && std::strcmp(argv[1], "spin-phase") == 0 ? "gpu_idle_spin" : nullptr);
+    phase.start(0);
     if (argc > 1 && std::strcmp(argv[1], "abort") == 0) return 9;
     auto start=std::chrono::steady_clock::now();
     hcLaunchKernel(reinterpret_cast<void*>(1), dim3(2), dim3(64), nullptr, 0, nullptr);
@@ -388,17 +388,6 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("trace_or_clock_error", rows[0]["status"])
         alignment = json.loads((self.directory / "clock-drift/clock_alignment.json").read_text())
         self.assertEqual(alignment["status"], "error")
-
-    def test_spin_phase_uses_the_same_clock_and_gpu_window_weighting(self):
-        result, rows = self.run_profile("3", "spin-phase", target_args=("spin-phase",))
-        self.assertEqual(result.returncode, 7, result.stderr)
-        first = rows[0]
-        self.assertEqual(first["phase"], "gpu_idle_spin")
-        self.assertEqual(first["clock_status"], "aligned")
-        self.assertEqual(first["numeric_util_pct"], "")
-        self.assertEqual(first["gpu_util_pct"], first["observed_util_pct"])
-        self.assertTrue(20 <= float(first["gpu_util_pct"]) <= 80)
-        self.assertAlmostEqual(float(first["gpu_active_ms"]), 350, delta=10)
 
     def test_sampler_failure_stops_the_run(self):
         result, rows = self.run_profile("3", "sampler-failure", smi_interval_ms=10,

@@ -90,6 +90,7 @@ __device__ inline void LL_updateElementFromLeftWaves(
 // All predecessors are < currentCol: the smallest unfinished issued column
 // always has completed predecessors. This works even with only one resident
 // worker; it does not require all grid blocks to run simultaneously.
+template <bool WaveUpdate>
 __device__ inline void LL_runSyncFreeWorker(
         const unsigned* __restrict__ sym_c_ptr_dev,
         const unsigned* __restrict__ sym_r_idx_dev,
@@ -117,13 +118,25 @@ __device__ inline void LL_runSyncFreeWorker(
         LL_loadColumn(sym_c_ptr_dev, sym_r_idx_dev, val_dev, *currentCol, column);
         const unsigned colBegin = sym_c_ptr_dev[*currentCol];
         const unsigned predecessorEnd = l_col_ptr_dev[*currentCol];
-        // Sorted row order preserves the triangular dependencies inside U(:,j).
-        // Once U is complete, diagonal/L rows use all upper predecessors.
-        for (unsigned p = colBegin; p < sym_c_ptr_dev[*currentCol + 1]; ++p) {
-            LL_updateElementFromLeftWaves(sym_c_ptr_dev, sym_r_idx_dev, val_dev,
-                                         l_col_ptr_dev, done, colBegin,
-                                         predecessorEnd, sym_r_idx_dev[p],
-                                         column, partials);
+        if (WaveUpdate) {
+            // Sorted row order preserves dependencies inside U(:,j).
+            for (unsigned p = colBegin; p < sym_c_ptr_dev[*currentCol + 1]; ++p) {
+                LL_updateElementFromLeftWaves(sym_c_ptr_dev, sym_r_idx_dev, val_dev,
+                                             l_col_ptr_dev, done, colBegin,
+                                             predecessorEnd, sym_r_idx_dev[p],
+                                             column, partials);
+            }
+        } else {
+            // Original LL-SF: the entire block applies one predecessor at a
+            // time. Complete its contribution before reading the next U(k,j).
+            for (unsigned p = colBegin; p < predecessorEnd; ++p) {
+                const unsigned leftCol = sym_r_idx_dev[p];
+                const unsigned begin = l_col_ptr_dev[leftCol] + 1;
+                const unsigned end = sym_c_ptr_dev[leftCol + 1];
+                if (begin == end) continue;
+                glu_sf::wait_column_ready(done + leftCol);
+                LL_updateFromLeft(sym_r_idx_dev, val_dev, leftCol, begin, end, column);
+            }
         }
         LL_finalizeColumn(sym_c_ptr_dev, sym_r_idx_dev, val_dev, *currentCol,
                           column, pivot, perturb, pert);
@@ -131,6 +144,7 @@ __device__ inline void LL_runSyncFreeWorker(
     }
 }
 
+template <bool WaveUpdate = false>
 __global__ void LL_factorizeSyncFree(
         const unsigned* __restrict__ sym_c_ptr_dev,
         const unsigned* __restrict__ sym_r_idx_dev,
@@ -145,7 +159,7 @@ __global__ void LL_factorizeSyncFree(
 {
     __shared__ unsigned currentCol;
     __shared__ REAL pivot;
-    LL_runSyncFreeWorker(sym_c_ptr_dev, sym_r_idx_dev, val_dev, l_col_ptr_dev,
+    LL_runSyncFreeWorker<WaveUpdate>(sym_c_ptr_dev, sym_r_idx_dev, val_dev, l_col_ptr_dev,
                          tmpMem, next_col, done, n, perturb, pert,
                          blockIdx.x, &currentCol, &pivot);
 }
