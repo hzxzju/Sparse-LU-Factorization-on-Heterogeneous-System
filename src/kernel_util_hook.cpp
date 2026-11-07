@@ -1,4 +1,4 @@
-// Optional callbacks for the complete numeric LU compute phase.
+// Optional callbacks for numeric LU and the standalone GPU spin experiment.
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
+#include <dlfcn.h>
 #include <string>
 
 namespace {
@@ -48,13 +49,37 @@ void Ack(int fd)
 
 struct Phase {
     int fd;
+    std::string marker;
+    long long begin_before, begin_after;
     long long start_ns;
     long long start_mono;
 };
+
+void Mark(const std::string &name, long long &before, long long &after)
+{
+    // HCTX and GPU activities share hcTracer's timeline. Bracket the marker
+    // with CLOCK_REALTIME, the clock printed by ht-smi, without GPU barriers.
+    using MarkFn = void (*)(const char *);
+    static MarkFn mark = []() -> MarkFn {
+        void *symbol = dlsym(RTLD_DEFAULT, "hctxMarkA");
+        if (!symbol) {
+            void *library = dlopen("libhcToolsExt.so", RTLD_NOW | RTLD_GLOBAL);
+            if (library) symbol = dlsym(library, "hctxMarkA");
+        }
+        if (!symbol) { errno = ENOSYS; Fail("hctxMarkA unavailable"); }
+        return reinterpret_cast<MarkFn>(symbol);
+    }();
+    before = Now(CLOCK_REALTIME);
+    mark(name.c_str());
+    after = Now(CLOCK_REALTIME);
+}
 } // namespace
 
-extern "C" void *glu_numeric_util_begin(const char *bdf)
+extern "C" void *glu_gpu_util_begin(const char *bdf, const char *name)
 {
+    if (!name || (std::strcmp(name, "numeric_lu_compute") && std::strcmp(name, "gpu_idle_spin"))) {
+        errno = EINVAL; Fail("unsupported GPU utilization phase");
+    }
     const char *path = std::getenv("GLU_NUMERIC_UTIL_SOCKET");
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
@@ -67,14 +92,22 @@ extern "C" void *glu_numeric_util_begin(const char *bdf)
         Fail("connect monitor");
     char request[256];
     static std::atomic<unsigned long long> sequence{0};
-    std::snprintf(request, sizeof(request), "BEGIN\t%ld\t%llu\t%s\tnumeric_lu_compute\n",
-                  static_cast<long>(getpid()), ++sequence, bdf);
+    const auto id = ++sequence;
+    std::snprintf(request, sizeof(request), "BEGIN\t%ld\t%llu\t%s\t%s\n",
+                  static_cast<long>(getpid()), id, bdf, name);
     Send(fd, request);
-    Ack(fd); // Sampling is ready before the compute window starts.
-    Phase *phase = new Phase{fd, 0, 0};
+    Ack(fd); // The already-running sampler's physical GPU has been checked.
+    Phase *phase = new Phase{fd, "GLU_NUMERIC_UTIL:" + std::to_string(getpid()) +
+                                ":" + std::to_string(id), 0, 0, 0, 0};
+    Mark(phase->marker + ":begin", phase->begin_before, phase->begin_after);
     phase->start_ns = Now(CLOCK_REALTIME);
     phase->start_mono = Now(CLOCK_MONOTONIC);
     return phase;
+}
+
+extern "C" void *glu_numeric_util_begin(const char *bdf)
+{
+    return glu_gpu_util_begin(bdf, "numeric_lu_compute");
 }
 
 extern "C" void glu_numeric_util_end(void *state, int numeric_status)
@@ -84,9 +117,12 @@ extern "C" void glu_numeric_util_end(void *state, int numeric_status)
     Phase *phase = static_cast<Phase *>(state);
     // The solver's existing barriers have completed all numeric streams.
     // No launch interposition, event insertion or extra synchronization here.
-    char request[256];
-    std::snprintf(request, sizeof(request), "END\t%lld\t%lld\t%lld\t%d\n",
-                  phase->start_ns, end_ns, end_mono - phase->start_mono, numeric_status);
+    long long end_before, end_after;
+    Mark(phase->marker + ":end", end_before, end_after);
+    char request[512];
+    std::snprintf(request, sizeof(request), "END\t%lld\t%lld\t%lld\t%d\t%lld\t%lld\t%lld\t%lld\n",
+                  phase->start_ns, end_ns, end_mono - phase->start_mono, numeric_status,
+                  phase->begin_before, phase->begin_after, end_before, end_after);
     Send(phase->fd, request);
     Ack(phase->fd);
     close(phase->fd);

@@ -1,0 +1,1 @@
+{"pid": "1614", "phase_id": "1", "bdf": "0000:d6:00.0", "phase": "gpu_idle_spin", "start_ns": 1793688407651014917, "end_ns": 1793688412653829232, "duration_ns": 5002814255, "numeric_status": 0, "begin_before": 1793688407650987165, "begin_after": 1793688407651014847, "end_before": 1793688412653831432, "end_after": 1793688412653868795}

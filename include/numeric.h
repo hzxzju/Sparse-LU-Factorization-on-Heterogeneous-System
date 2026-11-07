@@ -41,7 +41,8 @@ inline const char *SchedulingStrategyName(SchedulingStrategy scheduling)
 }
 
 inline void ValidateNumericConfiguration(UpdateStrategy strategy,
-                                         SchedulingStrategy scheduling)
+                                         SchedulingStrategy scheduling,
+                                         bool numeric_sm_padding = false)
 {
     if (strategy != UpdateStrategy::RightLooking && strategy != UpdateStrategy::LeftLooking)
         throw std::invalid_argument("Invalid numeric update strategy");
@@ -51,11 +52,14 @@ inline void ValidateNumericConfiguration(UpdateStrategy strategy,
     if (scheduling == SchedulingStrategy::SynchronizationFree &&
         strategy != UpdateStrategy::LeftLooking)
         throw std::invalid_argument("synchronization-free scheduling requires left-looking updates");
+    if (numeric_sm_padding && (strategy != UpdateStrategy::LeftLooking ||
+                              scheduling != SchedulingStrategy::SynchronizationFree))
+        throw std::invalid_argument("numeric SM padding requires left-looking synchronization-free scheduling");
 }
 
 void LUonDevice(Symbolic_Matrix &, ostream &, ostream &, bool,
                 UpdateStrategy = UpdateStrategy::RightLooking,
                 SchedulingStrategy = SchedulingStrategy::Level,
-                unsigned sf_workers = 0);
+                unsigned sf_workers = 0, bool numeric_sm_padding = false);
 
 #endif

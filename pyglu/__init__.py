@@ -65,7 +65,8 @@ def _to_csc_arrays(A):
 def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", *,
          sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
          symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
-         symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0):
+         symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0,
+         numeric_sm_padding=False):
     """Compute the sparse LU factorization of A on the GPU.
 
     Parameters
@@ -82,6 +83,9 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
         updates. Independent of the symbolic backend.
     sf_workers : int, optional
         Numeric SF worker limit; 0 selects automatically. Requires SF scheduling.
+    numeric_sm_padding : bool, optional
+        Experimental LL-SF grid with one block per SM and idle padding workers.
+        Default False. Pads activity counters and may change execution time.
     symbolic_backend : {"auto", "cpu", "gpu", "gpu-sf"}, optional
         Default "auto" selects GPU-SF when n >= 20000, max column nnz / n >=
         0.1, max column nnz / mean column nnz >= 64, and
@@ -132,13 +136,15 @@ def splu(A, perturb=False, update_strategy="right-looking", scheduling="level", 
         symbolic_batch_cols=symbolic_batch_cols, symbolic_block_size=symbolic_block_size,
         symbolic_verify=symbolic_verify, symbolic_no_fallback=symbolic_no_fallback,
         symbolic_sf_workers=symbolic_sf_workers, symbolic_pool_entries=symbolic_pool_entries,
-        symbolic_max_pool_entries=symbolic_max_pool_entries)
+        symbolic_max_pool_entries=symbolic_max_pool_entries,
+        numeric_sm_padding=numeric_sm_padding)
 
 
 def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="level", *,
             sf_workers=0, symbolic_backend="auto", symbolic_batch_cols=128,
             symbolic_block_size=256, symbolic_verify=False, symbolic_no_fallback=False,
-            symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0):
+            symbolic_sf_workers=0, symbolic_pool_entries=0, symbolic_max_pool_entries=0,
+            numeric_sm_padding=False):
     """Solve the sparse linear system Ax = b on the GPU.
 
     Parameters
@@ -155,7 +161,7 @@ def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="le
         Numeric scheduling. Default "level"; synchronization-free requires LL.
     sf_workers, symbolic_backend, symbolic_batch_cols, symbolic_block_size,
     symbolic_verify, symbolic_no_fallback, symbolic_sf_workers,
-    symbolic_pool_entries, symbolic_max_pool_entries : optional
+    symbolic_pool_entries, symbolic_max_pool_entries, numeric_sm_padding : optional
         Same keyword-only options and defaults as :func:`splu`.
 
     Returns
@@ -175,7 +181,8 @@ def spsolve(A, b, perturb=False, update_strategy="right-looking", scheduling="le
                 symbolic_block_size=symbolic_block_size, symbolic_verify=symbolic_verify,
                 symbolic_no_fallback=symbolic_no_fallback, symbolic_sf_workers=symbolic_sf_workers,
                 symbolic_pool_entries=symbolic_pool_entries,
-                symbolic_max_pool_entries=symbolic_max_pool_entries).solve(b)
+                symbolic_max_pool_entries=symbolic_max_pool_entries,
+                numeric_sm_padding=numeric_sm_padding).solve(b)
 
 
 __all__ = ["splu", "spsolve", "GLUFactorization"]

@@ -1,0 +1,55 @@
+(Tracer): 13:57:22 [INFO ] Tracer startup
+(Tracer): 13:57:22 [INFO ] =====Hctx Enable=====
+(Tracer): 13:57:22 [INFO ] =====Name Enable=====
+Matrices: 12 | Results: /workspace/src/batch_results/20261103_135722_232167
+[1/12] ASIC_100k_csr.mtx
+(Tracer): 13:57:22 [INFO ] Rpc connection established!
+(Tracer): 13:57:27 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1337.json
+  ok | total_solve_ms=5550.456847
+[2/12] ASIC_100ks_csr.mtx
+(Tracer): 13:57:31 [INFO ] Rpc connection established!
+(Tracer): 13:57:31 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1358.json
+  ok | total_solve_ms=2115.747994
+[3/12] ASIC_680ks_csr.mtx
+(Tracer): 13:57:34 [INFO ] Rpc connection established!
+(Tracer): 13:57:36 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1379.json
+  ok | total_solve_ms=3062.767109
+[4/12] G2_circuit_csr.mtx
+(Tracer): 13:57:37 [INFO ] Rpc connection established!
+(Tracer): 13:57:37 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1400.json
+  ok | total_solve_ms=613.536379
+[5/12] add32_csr.mtx
+(Tracer): 13:57:39 [INFO ] Rpc connection established!
+(Tracer): 13:57:39 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1421.json
+  ok | total_solve_ms=193.608735
+[6/12] bcircuit_csr.mtx
+(Tracer): 13:57:40 [INFO ] Rpc connection established!
+(Tracer): 13:57:41 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1442.json
+  ok | total_solve_ms=491.108757
+[7/12] dianwangmatrix1_csr.mtx
+(Tracer): 13:57:42 [INFO ] Rpc connection established!
+(Tracer): 13:57:42 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1463.json
+  ok | total_solve_ms=250.041479
+[8/12] dianwangmatrix2_csr.mtx
+(Tracer): 13:57:46 [INFO ] Rpc connection established!
+(Tracer): 13:57:46 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1484.json
+  ok | total_solve_ms=2850.319267
+[9/12] rajat13_csr.mtx
+(Tracer): 13:57:47 [INFO ] Rpc connection established!
+(Tracer): 13:57:47 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1505.json
+  ok | total_solve_ms=162.383686
+[10/12] rajat26_csr.mtx
+(Tracer): 13:57:49 [INFO ] Rpc connection established!
+(Tracer): 13:57:49 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1526.json
+  ok | total_solve_ms=294.48447
+[11/12] rajat27_csr.mtx
+(Tracer): 13:57:50 [INFO ] Rpc connection established!
+(Tracer): 13:57:50 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1547.json
+  ok | total_solve_ms=170.81411
+[12/12] twotone_csr.mtx
+(Tracer): 13:58:02 [INFO ] Rpc connection established!
+(Tracer): 13:58:03 [INFO ] Output file: 	/workspace/util_sampling/20261103_135721/trace/numeric-1568.json
+  ok | total_solve_ms=11142.213473
+Finished: 12 ok, 0 failed. CSV: /workspace/src/batch_results/20261103_135722_232167/summary.csv
+(Tracer): 13:58:04 [INFO ] User process ends execution.
+(Tracer): 13:58:04 [INFO ] Tracer ends execution.

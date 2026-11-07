@@ -27,6 +27,7 @@ void help_message()
     cerr << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
     cerr << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
     cerr << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
+    cerr << "--numeric-sm-padding (experimental; default off; requires LL-SF)" << endl;
     cerr << "--symbolic-backend auto|cpu|gpu|gpu-sf (default: auto; CPU/GPU-SF selected by input structure)" << endl;
     cerr << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
     cerr << "--symbolic-sf-workers N (default: 0 = automatic; requires auto or gpu-sf)" << endl;
@@ -53,6 +54,7 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
     bool PERTURB = false;
     bool progress = false;
     unsigned sf_workers = 0;
+    bool numeric_sm_padding = false;
     double residual_tolerance = 1e-6;
     unsigned max_refine_iters = 0;
     bool refine_limit_is_order = true;
@@ -90,6 +92,10 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
         }
         else if (strcmp(argv[i], "--progress") == 0) {
             progress = true;
+            i += 1;
+        }
+        else if (strcmp(argv[i], "--numeric-sm-padding") == 0) {
+            numeric_sm_padding = true;
             i += 1;
         }
         else if (strcmp(argv[i], "--symbolic-backend") == 0) {
@@ -229,7 +235,7 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
     }
 
     try {
-        ValidateNumericConfiguration(update_strategy, scheduling);
+        ValidateNumericConfiguration(update_strategy, scheduling, numeric_sm_padding);
         ValidateSymbolicConfiguration(symbolic_config);
         if (sf_workers && scheduling != SchedulingStrategy::SynchronizationFree)
             throw std::invalid_argument("--sf-workers requires synchronization-free scheduling");
@@ -322,7 +328,8 @@ static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagn
         ostream errors(&error_buffer);
         report_stage("GPU numeric LU started");
         t.start();
-        LUonDevice(A_sym, diagnostics, errors, PERTURB, update_strategy, scheduling, sf_workers);
+        LUonDevice(A_sym, diagnostics, errors, PERTURB, update_strategy, scheduling,
+                   sf_workers, numeric_sm_padding);
         t.elapsedWallclockTime(numeric_ms);
         if (!numeric_errors.str().empty()) {
             diagnostics << numeric_errors.str();

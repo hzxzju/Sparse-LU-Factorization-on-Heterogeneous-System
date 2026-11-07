@@ -1,0 +1,15 @@
+(Tracer): 14:46:47 [INFO ] Tracer startup
+(Tracer): 14:46:47 [INFO ] =====Hctx Enable=====
+(Tracer): 14:46:47 [INFO ] =====Name Enable=====
+(Tracer): 14:46:47 [INFO ] Rpc connection established!
+hctxAutoStart called! 
+hcToolsExtPid_UsedPort:1614-39007
+Interact with tools, pid: 1614
+Tracer client send Connect Ack: 0, pid: 1614
+GPU idle spin: device=0 bdf=0000:d6:00.0 name=Mars X201 sm_count=104 grid_blocks=104 threads_per_block=256 resident_blocks_per_sm=1 dynamic_shared_bytes=33024 mode=all-threads duration_seconds=5
+Tools attached is true 
+All 104 blocks started; holding all SMs for 5 seconds.
+GPU idle spin completed: started_blocks=104 finished_blocks=104 hold_seconds=5.000056
+(Tracer): 14:46:52 [INFO ] Output file: 	/workspace/util_sampling/20261103_144647/trace/numeric-1614.json
+(Tracer): 14:46:53 [INFO ] User process ends execution.
+(Tracer): 14:46:53 [INFO ] Tracer ends execution.

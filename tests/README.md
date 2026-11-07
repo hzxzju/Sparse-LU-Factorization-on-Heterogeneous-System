@@ -245,3 +245,19 @@ numeric stub. It checks exclusive CLOCK_MONOTONIC accounting, cleanup charging,
 stdout's single six-decimal timing line and weighted `total_solve_ms`. It does
 not validate GPU kernels. Batch cases reject duplicate/missing timing summaries,
 nonfinite/negative values, and ignore historical unweighted total-time labels.
+
+The opt-in numeric SM padding experiment has a GPU-free resource validation
+target and a cooperative-launch numerical regression:
+
+```sh
+make -C src test-numeric-sm-padding-host numeric_strategies_test
+timeout -k 3s 180s ./src/numeric_strategies_test --sm-padding
+```
+
+The optional flag adds 1/3/49/automatic compute-worker configurations to all 17
+cases, including repeated factorization with different values. It requires
+cooperative launch and exactly one resident block per SM after shared-memory
+reservation; unsupported hardware is a failure for this explicit acceptance run.
+Ordinary regression runs keep the experiment disabled. See
+[RUN_BATCH.md](../src/RUN_BATCH.md) for the default-off runtime switch, workspace
+layout, completion protocol, and timing/metric interpretation.

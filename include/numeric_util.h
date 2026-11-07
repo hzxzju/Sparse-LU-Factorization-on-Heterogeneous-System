@@ -13,7 +13,7 @@ class NumericUtilScope {
 public:
     NumericUtilScope() : state_(nullptr), end_(nullptr) {}
     ~NumericUtilScope() { finish(1); }
-    void start(int device) {
+    void start(int device, const char *phase_name = nullptr) {
         if (!std::getenv("GLU_NUMERIC_UTIL_SOCKET")) return;
         auto begin = reinterpret_cast<void *(*)(const char *)>(dlsym(RTLD_DEFAULT, "glu_numeric_util_begin"));
         end_ = reinterpret_cast<void (*)(void *, int)>(dlsym(RTLD_DEFAULT, "glu_numeric_util_end"));
@@ -22,7 +22,15 @@ public:
         char bdf[64]{};
         if (hcDeviceGetPCIBusId(bdf, sizeof(bdf), device) != hcSuccess)
             throw std::runtime_error("cannot obtain numeric GPU PCI address");
-        state_ = begin(bdf);
+        if (phase_name) {
+            auto named_begin = reinterpret_cast<void *(*)(const char *, const char *)>(
+                dlsym(RTLD_DEFAULT, "glu_gpu_util_begin"));
+            if (!named_begin)
+                throw std::runtime_error("named GPU utilization profiler callback is unavailable");
+            state_ = named_begin(bdf, phase_name);
+        } else {
+            state_ = begin(bdf);
+        }
     }
     void finish(int status = 0) {
         if (state_) {
