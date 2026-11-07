@@ -291,6 +291,9 @@ vector<REAL> Symbolic_Matrix::solve(SNicsLU *nicslu, const vector<REAL> &rhs)
 
 vector<REAL> Symbolic_Matrix::solve_CSR(SNicsLU *nicslu, const vector<REAL> &rhs)
 {
+    const bool initial_solve = glu_timing::active()
+        && glu_timing::active()->current == GLU_TRIANGULAR_SOLVE;
+    glu_timing::Scope host_path(GLU_REFINEMENT);
     vector<REAL> b(n);
     vector<REAL> x(n);
     if (n == 0)
@@ -316,26 +319,30 @@ vector<REAL> Symbolic_Matrix::solve_CSR(SNicsLU *nicslu, const vector<REAL> &rhs
         }
     }
 
-    // For B^T = L*U, solve U^T*y = b (non-unit diagonal).
-    for (unsigned j = 0; j < n; ++j) {
-        REAL sum = 0.0;
-        unsigned diag = l_col_ptr[j];
+    {
+        glu_timing::Scope substitution(initial_solve ? GLU_TRIANGULAR_SOLVE : GLU_REFINEMENT);
+        // For B^T = L*U, solve U^T*y = b (non-unit diagonal).
+        for (unsigned j = 0; j < n; ++j) {
+            REAL sum = 0.0;
+            unsigned diag = l_col_ptr[j];
 
-        for (unsigned p = sym_c_ptr[j]; p < l_col_ptr[j]; ++p) {
-            sum += val[p] * b[sym_r_idx[p]];
-        }
-        b[j] = (b[j] - sum) / val[diag];
-    }
-
-    // Solve L^T*z = y (unit diagonal), giving B*z = b.
-    for (int jj = n - 1; jj >= 0; --jj) {
-        REAL sum = 0.0;
-
-        for (unsigned p = l_col_ptr[jj] + 1; p < sym_c_ptr[jj + 1]; ++p) {
-            sum += val[p] * b[sym_r_idx[p]];
+            for (unsigned p = sym_c_ptr[j]; p < l_col_ptr[j]; ++p) {
+                sum += val[p] * b[sym_r_idx[p]];
+            }
+            b[j] = (b[j] - sum) / val[diag];
         }
 
-        b[jj] -= sum;
+        // Solve L^T*z = y (unit diagonal), giving B*z = b.
+        for (int jj = n - 1; jj >= 0; --jj) {
+            REAL sum = 0.0;
+
+            for (unsigned p = l_col_ptr[jj] + 1; p < sym_c_ptr[jj + 1]; ++p) {
+                sum += val[p] * b[sym_r_idx[p]];
+            }
+
+            b[jj] -= sum;
+        }
+
     }
 
     // Apply column permutation and scaling

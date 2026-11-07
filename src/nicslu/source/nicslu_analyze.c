@@ -6,10 +6,11 @@
 #include "nicslu_internal.h"
 #include "timer_c.h"
 #include "math.h"
+#include "../../../include/stage_timing.h"
 
 extern size_t g_sp;
 
-int NicsLU_Analyze(SNicsLU *nicslu)
+static int AnalyzeImpl(SNicsLU *nicslu, GluTimings *timings)
 {
 	int__t rank;
 	int err;
@@ -55,6 +56,7 @@ int NicsLU_Analyze(SNicsLU *nicslu)
 	}
 
 	/*begin*/
+	glu_timing_switch(timings, GLU_PREPROCESS);
 	TimerStart((STimer *)(nicslu->timer));
 
 	/*set parameters*/
@@ -156,6 +158,7 @@ int NicsLU_Analyze(SNicsLU *nicslu)
 
 	/**************************************************************************************/
 	/*amd*/
+	glu_timing_switch(timings, GLU_ORDERING);
 	cp0 = NULL;
 	ci0 = NULL;
 	rp = NULL;
@@ -318,6 +321,7 @@ int NicsLU_Analyze(SNicsLU *nicslu)
 	free(w);
 
 	/*mc64_scale*/
+	glu_timing_switch(timings, GLU_PREPROCESS);
 	u = dw;/*col*/
 	v = u + n;/*row*/
 
@@ -361,4 +365,17 @@ int NicsLU_Analyze(SNicsLU *nicslu)
 	nicslu->stat[0] = TimerGetRuntime((STimer *)(nicslu->timer));
 
 	return NICS_OK;
+}
+
+int NicsLU_AnalyzeTimed(SNicsLU *nicslu, GluTimings *timings)
+{
+    GluStage previous = glu_timing_switch(timings, GLU_PREPROCESS);
+    int result = AnalyzeImpl(nicslu, timings);
+    glu_timing_switch(timings, previous);
+    return result;
+}
+
+int NicsLU_Analyze(SNicsLU *nicslu)
+{
+    return NicsLU_AnalyzeTimed(nicslu, NULL);
 }

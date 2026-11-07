@@ -366,6 +366,8 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
                 UpdateStrategy update_strategy, SchedulingStrategy scheduling,
                 unsigned sf_workers)
 {
+    glu_timing::Scope function_phase(GLU_ANALYSIS_OTHER);
+    GluTimings *timings = glu_timing::active();
     try {
         ValidateNumericConfiguration(update_strategy, scheduling);
     } catch (const std::invalid_argument &e) {
@@ -424,6 +426,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     int dev = -1;
     hcDeviceProp_t deviceProp;
     try {
+        glu_timing::Scope phase(GLU_CONTEXT_INIT);
         dev = glu_gpu::SelectDevice(A_sym.gpu_device, glu_gpu::DeviceRequirements(),
                                    deviceProp, out);
     } catch (const std::runtime_error &e) {
@@ -443,14 +446,14 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     out << "Numeric update strategy: " << UpdateStrategyName(update_strategy) << endl;
     out << "Numeric scheduling: " << SchedulingStrategyName(scheduling) << endl;
 
-    hcEvent_t start = nullptr, stop = nullptr;
     unsigned *sym_c_ptr_dev = nullptr, *sym_r_idx_dev = nullptr, *l_col_ptr_dev = nullptr;
     REAL *val_dev = nullptr;
     unsigned *csr_r_ptr_dev = nullptr, *csr_c_idx_dev = nullptr, *csr_diag_ptr_dev = nullptr;
     int *level_idx_dev = nullptr;
     unsigned *next_col_dev = nullptr, *done_dev = nullptr;
     REAL *tmpMem = nullptr;
-    float time = 0.0f;
+    double time = 0.0;
+    Timer gpu_timer;
 
     constexpr int Nstreams = 16;
     hcStream_t streams[Nstreams];
@@ -458,6 +461,8 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     NumericUtilScope numeric_util;
 
     auto cleanup = [&]() {
+        glu_timing::Scope phase(GLU_CLEANUP);
+        hcCheck(hcDeviceSynchronize(), "hcDeviceSynchronize(cleanup)");
         for (int j = 0; j < Nstreams; ++j) {
             if (stream_created[j])
                 hcStreamDestroy(streams[j]);
@@ -484,10 +489,6 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
             hcFree(next_col_dev);
         if (done_dev != nullptr)
             hcFree(done_dev);
-        if (start != nullptr)
-            hcEventDestroy(start);
-        if (stop != nullptr)
-            hcEventDestroy(stop);
     };
 
 #define HC_RETURN_ON_ERR(call, op_name) \
@@ -499,9 +500,8 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         } \
     } while (0)
 
-    HC_RETURN_ON_ERR(hcEventCreate(&start), "hcEventCreate(start)");
-    HC_RETURN_ON_ERR(hcEventCreate(&stop), "hcEventCreate(stop)");
-    HC_RETURN_ON_ERR(hcEventRecord(start), "hcEventRecord(start)");
+    gpu_timer.start();
+    glu_timing_switch(timings, GLU_WORKSPACE_ALLOC);
 
     // hcMalloc allocations are SVM-accessible from host and device according
     // to the guide; data is still copied explicitly to preserve ownership flow.
@@ -521,12 +521,17 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
         HC_RETURN_ON_ERR(hcMalloc((void**)&done_dev, size_t(n) * sizeof(unsigned)), "hcMalloc(done_dev)");
     }
 
+    glu_timing_switch(timings, GLU_PLAN_UPLOAD);
     // hcMemcpy is blocking in HTHPCC; each upload completes before kernels use it.
     HC_RETURN_ON_ERR(hcMemcpy(sym_c_ptr_dev, &(A_sym.sym_c_ptr[0]), (n + 1) * sizeof(unsigned), hcMemcpyHostToDevice),
         "hcMemcpy(sym_c_ptr_dev)");
     HC_RETURN_ON_ERR(hcMemcpy(sym_r_idx_dev, &(A_sym.sym_r_idx[0]), nnz * sizeof(unsigned), hcMemcpyHostToDevice),
         "hcMemcpy(sym_r_idx_dev)");
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(plan upload)");
+    glu_timing_switch(timings, GLU_VALUE_H2D);
     HC_RETURN_ON_ERR(hcMemcpy(val_dev, &(A_sym.val[0]), nnz * sizeof(REAL), hcMemcpyHostToDevice), "hcMemcpy(val_dev)");
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(value H2D)");
+    glu_timing_switch(timings, GLU_PLAN_UPLOAD);
     HC_RETURN_ON_ERR(hcMemcpy(l_col_ptr_dev, &(A_sym.l_col_ptr[0]), n * sizeof(unsigned), hcMemcpyHostToDevice),
         "hcMemcpy(l_col_ptr_dev)");
     if (!left_looking) {
@@ -540,7 +545,9 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     if (!sync_free)
         HC_RETURN_ON_ERR(hcMemcpy(level_idx_dev, &(A_sym.level_idx[0]), n * sizeof(int), hcMemcpyHostToDevice),
             "hcMemcpy(level_idx_dev)");
-    else {
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(plan upload)");
+    glu_timing_switch(timings, GLU_WORKSPACE_ALLOC);
+    if (sync_free) {
         // Default-stream initialization precedes the default-stream SF launch.
         // These states are reset on every factorization, including reused CSC.
         HC_RETURN_ON_ERR(hcMemset(next_col_dev, 0, sizeof(unsigned)), "hcMemset(next_col_dev)");
@@ -618,6 +625,7 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     // RL also needs this barrier before launching on its independent streams.
     HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(tmpMem init)");
 
+    glu_timing_switch(timings, GLU_PREPROCESS);
     // calculate 1-norm of A and perturbation value for perturbation
     REAL pert = 0;
     if (PERTURB)
@@ -684,13 +692,22 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     };
 
     Timer numeric_timer;
-    numeric_util.start(dev);
+    {
+        glu_timing::Scope phase(GLU_LOGGING);
+        numeric_util.start(dev);
+    }
+    const double numeric_before = timings ? timings->seconds[GLU_NUMERIC_FACTOR] : 0.;
+    glu_timing_switch(timings, GLU_NUMERIC_FACTOR);
     numeric_timer.start();
 
     if (sync_free) {
-        const unsigned ll_threads = maxWaveAlignedThreads < 256
-            ? static_cast<unsigned>(maxWaveAlignedThreads) : 256u;
+        const unsigned ll_threads = static_cast<unsigned>(maxWaveAlignedThreads) < glu_sf::ll_max_block_threads
+            ? static_cast<unsigned>(maxWaveAlignedThreads) : glu_sf::ll_max_block_threads;
         out << "LL-SF workers: " << TMPMEMNUM << ", workspace bytes: " << tmp_bytes << endl;
+        out << "LL-SF threads/block: " << ll_threads
+            << ", waves/block: " << ll_threads / glu_sf::ll_wave_size
+            << ", search threads/wave: " << glu_sf::ll_search_lanes
+            << ", search stripe stride: " << glu_sf::ll_search_stride << endl;
         out << "LL-SF kernel launch; waiting for completion..." << endl;
         LL_factorizeSyncFree<<<TMPMEMNUM, ll_threads>>>(sym_c_ptr_dev,
                                                       sym_r_idx_dev,
@@ -806,18 +823,27 @@ void LUonDevice(Symbolic_Matrix &A_sym, ostream &out, ostream &err, bool PERTURB
     // but excludes allocation, initialization and host/device transfers.
     double numeric_compute_ms = 0.;
     numeric_timer.elapsedWallclockTime(numeric_compute_ms);
+    glu_timing_switch(timings, GLU_LOGGING);
+    if (timings) numeric_compute_ms = (timings->seconds[GLU_NUMERIC_FACTOR] - numeric_before) * 1000.;
     numeric_util.finish();
+
+    // No device triangular solver exists: prepare the host solve path here.
+    // This is refinement/fallback overhead, never a solution-vector download.
+    const double refinement_before = timings ? timings->seconds[GLU_REFINEMENT] : 0.;
+    glu_timing_switch(timings, GLU_REFINEMENT);
 
     HC_RETURN_ON_ERR(hcMemcpy(&(A_sym.val[0]), val_dev, nnz * sizeof(REAL), hcMemcpyDeviceToHost),
         "hcMemcpy(A_sym.val)");
-    HC_RETURN_ON_ERR(hcEventRecord(stop), "hcEventRecord(stop)");
-    HC_RETURN_ON_ERR(hcEventSynchronize(stop), "hcEventSynchronize(stop)");
-    HC_RETURN_ON_ERR(hcEventElapsedTime(&time, start, stop), "hcEventElapsedTime");
+    HC_RETURN_ON_ERR(hcDeviceSynchronize(), "hcDeviceSynchronize(factor D2H)");
+    glu_timing_switch(timings, GLU_LOGGING);
+    if (timings) timings->factor_d2h_s += timings->seconds[GLU_REFINEMENT] - refinement_before;
+    gpu_timer.elapsedWallclockTime(time);
 
     out << "Total GPU time: " << time << " ms" << endl;
     out << "Numeric LU compute time (wall-clock): " << numeric_compute_ms << " ms" << endl;
 
-#ifdef GLU_DEBUG
+#if GLU_DEBUG
+    glu_timing_switch(timings, GLU_RESIDUAL_CHECK);
     // check NaN elements
     unsigned err_find = 0;
     for(unsigned i = 0; i < nnz; i++)

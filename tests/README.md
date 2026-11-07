@@ -1,5 +1,24 @@
 # Numeric strategy regression checks
 
+LL-SF uses one native 64-lane wave per predecessor, with only the first 24
+lanes searching its L column. The CTA retains its original thread count
+(normally 256); rows advance in sorted order so each U value is complete before
+later rows consume it. Search stripes have stride 64; active lane `l` searches
+stripe offsets `l`, `l+24` and (when below 64) `l+48`, covering all 64 offsets.
+The CTA combines contributions in a fixed order without atomic additions.
+
+```sh
+make -C src test-ll-sf-host DEBUG=0
+```
+
+This runs the production kernel with one simulated CTA and host replacements
+for device barriers/atomics. It compares sparse fill-in, empty L, pivot
+perturbation and a dense 66-column case against independent dense elimination,
+using 64/128/256 threads and two runs with reset flags and dirty workspace.
+The dense case covers search lengths around 24, 48 and 64 and repeated predecessor
+batches. This does not validate GPU memory scope, inter-CTA progress or speed;
+the real GPU numeric and publication tests below are still required for those.
+
 Symbolic and Numeric now use a shared GPU selector: initialization errors on one
 enumerated device are logged and skipped, and Numeric prefers the device selected
 by Symbolic. Test its failure handling without a GPU:
@@ -82,6 +101,15 @@ residual target failures and timeout handling, and the summary/log/solution file
 python3 -m unittest discover -s tests -p test_run_batch.py -v
 ```
 
+The host-only solution comparison checks cover existing CPU reference parsing,
+wrong-length/missing/nonfinite input, absolute and relative errors, zero
+reference norms, very large/small norms and extended-precision solutions:
+
+```sh
+"${CXX:-$HOME/local/gcc-7.3.0/usr/bin/g++}" -O2 -Wall -Wextra -std=c++11 -Iinclude tests/solution_error.cpp src/solution_error.cpp -o /tmp/glu-solution-error-test
+/tmp/glu-solution-error-test
+```
+
 The host-only refinement checks cover skipping an already accurate solution,
 repeated corrections using inexact factors, absolute residual targets, iteration
 caps (including zero), stagnation, rejecting worsening/nonfinite updates,
@@ -96,7 +124,7 @@ HTHPCC host, the installed compiler is `$HOME/local/gcc-7.3.0/usr/bin/g++`):
 
 For a target-GPU integration check on the two problematic matrices, build and
 run each solver invocation from a separate output directory (each writes
-`x.dat`). With default arguments, the CLI targets absolute residualL2 <= 1e-6
+`x.dat`). With default arguments, the CLI targets absolute GPU/CPU solution error L2 <= 1e-6
 and uses the matrix order as the correction cap:
 
 ```sh
@@ -108,12 +136,15 @@ mkdir "$GLU_TEST_RESULTS/asic" "$GLU_TEST_RESULTS/twotone"
 (cd "$GLU_TEST_RESULTS/twotone" && "$GLU_TEST_ROOT/src/lu_cmd" -i "$GLU_TEST_ROOT/src/matrix/twotone_csr.mtx")
 ```
 
-Inspect `Refinement iterations`, `Refinement status`, final `Ax-b (2-norm)`
-and the exit code: 0 means convergence, 2 means a missed target with the best
-solution retained. `--max-refine-iters 0` provides an initial-solve comparison;
+Inspect `GPU-CPU absolute L2 error`, `GPU-CPU relative L2 error`,
+`CPU reference file` and the exit code: 0 means the absolute solution error meets
+the target, 2 means it misses the target. `Refinement status` still describes
+the internal Ax-b residual, independently of this final comparison. Existing
+CPU reference files are required; reference reading and comparison pause all
+stage timers, including `post_s`. `--max-refine-iters 0` provides an initial-solve comparison;
 `--max-refine-iters 1` checks the single-correction cap. The refinement time
 includes the initial residual check and all correction work, and is included in
-`T_gpu`. A stagnating or nonfinite candidate is rejected and stops refinement.
+`solve_s` (the batch `total_solve_ms` is weighted). A stagnating or nonfinite candidate is rejected and stops refinement.
 See [../src/RUN_BATCH.md](../src/RUN_BATCH.md) for all options and CSV status rules.
 
 From the repository root, test the native Matrix Market reader (requires GCC
@@ -200,3 +231,17 @@ The numeric backend now uses the POSIX `Timer` host implementation; these
 regression build commands require Linux (including WSL).
 This checks actual GPU arithmetic but does not validate the HTHPCC SDK build or
 performance on its target hardware.
+
+
+Stage accounting and terminal protocol regression (host compiler, no GPU):
+
+```sh
+python3 -m unittest discover -s tests -p test_stage_timing.py -v
+python3 -m unittest discover -s tests -p test_run_batch.py -v
+```
+
+The host CLI fixture uses real preprocessing and CPU substitution with a diagonal
+numeric stub. It checks exclusive CLOCK_MONOTONIC accounting, cleanup charging,
+stdout's single six-decimal timing line and weighted `total_solve_ms`. It does
+not validate GPU kernels. Batch cases reject duplicate/missing timing summaries,
+nonfinite/negative values, and ignore historical unweighted total-time labels.

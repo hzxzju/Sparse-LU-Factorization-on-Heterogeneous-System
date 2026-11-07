@@ -2,7 +2,7 @@
 #include "symbolic.h"
 #include "gpu_device.h"
 #include "symbolic_sf.cuh"
-#include <chrono>
+#include "stage_timing.h"
 
 #include <algorithm>
 #include <climits>
@@ -25,7 +25,15 @@ template <typename T> class DeviceArray
 public:
     T *data = nullptr;
     explicit DeviceArray(size_t count = 0) { allocate(count); }
-    ~DeviceArray() { if (data) hcFree(data); }
+    ~DeviceArray() {
+        if (data) {
+            // Finish the previous GPU stage before entering cleanup.
+            if (hcDeviceSynchronize() != hcSuccess) std::abort();
+            glu_timing::Scope phase(GLU_CLEANUP);
+            if (hcFree(data) != hcSuccess || hcDeviceSynchronize() != hcSuccess)
+                std::abort();
+        }
+    }
     DeviceArray(const DeviceArray &) = delete;
     DeviceArray &operator=(const DeviceArray &) = delete;
 
@@ -34,17 +42,25 @@ public:
         if (!count) return;
         if (count > std::numeric_limits<size_t>::max() / sizeof(T))
             throw std::runtime_error("GPU symbolic allocation size overflow");
+        Check(hcDeviceSynchronize(), "symbolic pre-allocation synchronization");
+        glu_timing::Scope phase(GLU_WORKSPACE_ALLOC);
         Check(hcMalloc(reinterpret_cast<void **>(&data), count * sizeof(T)), "hcMalloc(symbolic)");
+        Check(hcDeviceSynchronize(), "symbolic allocation synchronization");
     }
     void upload(const T *source, size_t count)
     {
-        if (count) Check(hcMemcpy(data, source, count * sizeof(T), hcMemcpyHostToDevice),
-                         "hcMemcpy(symbolic H2D)");
+        if (!count) return;
+        Check(hcDeviceSynchronize(), "symbolic pre-upload synchronization");
+        glu_timing::Scope phase(GLU_PLAN_UPLOAD);
+        Check(hcMemcpy(data, source, count * sizeof(T), hcMemcpyHostToDevice),
+              "hcMemcpy(symbolic H2D)");
+        Check(hcDeviceSynchronize(), "symbolic upload synchronization");
     }
     void download(T *target, size_t count) const
     {
         if (count) Check(hcMemcpy(target, data, count * sizeof(T), hcMemcpyDeviceToHost),
                          "hcMemcpy(symbolic D2H)");
+        Check(hcDeviceSynchronize(), "symbolic download synchronization");
     }
 };
 
@@ -347,9 +363,12 @@ HostPattern BuildPattern(unsigned n, const unsigned *ai, const unsigned *ap,
     if (!n) return result;
 
     hcDeviceProp_t properties;
-    result.device = glu_gpu::SelectDevice(preferred,
-        glu_gpu::DeviceRequirements(config.block_size, n / config.block_size + 1),
-        properties, out);
+    {
+        glu_timing::Scope phase(GLU_CONTEXT_INIT);
+        result.device = glu_gpu::SelectDevice(preferred,
+            glu_gpu::DeviceRequirements(config.block_size, n / config.block_size + 1),
+            properties, out);
+    }
 
     DeviceArray<unsigned> d_ap(size_t(n) + 1), d_ai(ap[n]), d_diag_local(n);
     DeviceArray<unsigned long long> d_counts(n), d_wide_ptr(size_t(n) + 1);
@@ -371,8 +390,11 @@ HostPattern BuildPattern(unsigned n, const unsigned *ai, const unsigned *ap,
     DeviceArray<unsigned> workspace;
     // The memory estimate can race other users; retry smaller batches safely.
     for (;;) {
+        Check(hcDeviceSynchronize(), "symbolic workspace pre-allocation synchronization");
+        glu_timing::Scope phase(GLU_WORKSPACE_ALLOC);
         const hcError_t status = hcMalloc(reinterpret_cast<void **>(&workspace.data),
                                          size_t(slots) * slot_bytes);
+        Check(hcDeviceSynchronize(), "symbolic workspace allocation synchronization");
         if (status == hcSuccess) break;
         workspace.data = nullptr;
         hcGetLastError();
@@ -427,29 +449,17 @@ HostPattern BuildPattern(unsigned n, const unsigned *ai, const unsigned *ap,
 
 // A failed arena attempt owns all buffers and completes its kernel before
 // destruction. Growth always restarts the entire computation with new pointers.
-using WallClock = std::chrono::steady_clock;
+using WallClock = glu_timing::MonotonicClock;
 double Milliseconds(WallClock::time_point start) {
     return std::chrono::duration<double, std::milli>(WallClock::now() - start).count();
 }
 class WorkerEvents {
-    hcEvent_t begin{}, end{};
-    bool have_begin = false, have_end = false;
+    WallClock::time_point begin;
 public:
-    WorkerEvents() {
-        Check(hcEventCreate(&begin), "hcEventCreate(symbolic start)");
-        have_begin = true;
-        const hcError_t status = hcEventCreate(&end);
-        if (status != hcSuccess) { hcEventDestroy(begin); have_begin = false; Check(status, "hcEventCreate(symbolic end)"); }
-        have_end = true;
-    }
-    ~WorkerEvents() { if (have_end) hcEventDestroy(end); if (have_begin) hcEventDestroy(begin); }
-    void start() { Check(hcEventRecord(begin, 0), "hcEventRecord(symbolic start)"); }
+    void start() { begin = WallClock::now(); }
     double stop() {
-        Check(hcEventRecord(end, 0), "hcEventRecord(symbolic end)");
-        Check(hcEventSynchronize(end), "hcEventSynchronize(symbolic)");
-        float ms = 0;
-        Check(hcEventElapsedTime(&ms, begin, end), "hcEventElapsedTime(symbolic)");
-        return ms;
+        Check(hcDeviceSynchronize(), "symbolic worker synchronization");
+        return Milliseconds(begin);
     }
 };
 
@@ -507,8 +517,11 @@ HostPattern BuildSFPattern(unsigned n, const unsigned *ai, const unsigned *ap,
         return result;
     }
     hcDeviceProp_t properties{};
-    result.device = glu_gpu::SelectDevice(preferred,
-        glu_gpu::DeviceRequirements(config.block_size, n / config.block_size + 1), properties, out);
+    {
+        glu_timing::Scope phase(GLU_CONTEXT_INIT);
+        result.device = glu_gpu::SelectDevice(preferred,
+            glu_gpu::DeviceRequirements(config.block_size, n / config.block_size + 1), properties, out);
+    }
     size_t free_bytes = 0, total_bytes = 0;
     Check(hcMemGetInfo(&free_bytes, &total_bytes), "hcMemGetInfo(symbolic SF)");
     const size_t words = (size_t(n) + 31) / 32;
@@ -677,6 +690,7 @@ void ValidatePattern(unsigned n, const HostPattern &p)
 
 void Symbolic_Matrix::fill_in(unsigned *ai, unsigned *ap, const SymbolicConfig &config)
 {
+    glu_timing::Scope phase(GLU_SYMBOLIC);
     const auto symbolic_start = WallClock::now();
     ValidateSymbolicConfiguration(config);
     // All configured backends share the canonical CSC contract. Keep the
@@ -684,6 +698,7 @@ void Symbolic_Matrix::fill_in(unsigned *ai, unsigned *ap, const SymbolicConfig &
     ValidateInput(n, ai, ap);
     SymbolicBackend backend = config.backend;
     if (backend == SymbolicBackend::Auto) {
+        glu_timing::Scope selection_phase(GLU_ANALYSIS_OTHER);
         const auto auto_start = WallClock::now();
         const SymbolicAutoSelection selection = SelectAutomaticSymbolicBackend(n, ap);
         const double auto_ms = Milliseconds(auto_start);

@@ -10,6 +10,7 @@
 #include "symbolic.h"
 #include "numeric.h"
 #include "refinement.h"
+#include "solution_error.h"
 #include "Timer.h"
 #include "preprocess.h"
 #include "nicslu.h"
@@ -18,35 +19,37 @@ using namespace std;
 
 void help_message()
 {
-    cout << endl;
-    cout << "GLU program V3.0" << endl;
-    cout << "Usage: ./lu_cmd -i inputfile" << endl;
-    cout << "Additional usage: ./lu_cmd -i inputfile -p" << endl;
-    cout << "-p to enable perturbation" << endl;
-    cout << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
-    cout << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
-    cout << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
-    cout << "--symbolic-backend auto|cpu|gpu|gpu-sf (default: auto; CPU/GPU-SF selected by input structure)" << endl;
-    cout << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
-    cout << "--symbolic-sf-workers N (default: 0 = automatic; requires auto or gpu-sf)" << endl;
-    cout << "--symbolic-pool-entries N / --symbolic-max-pool-entries N (0 = automatic; auto or gpu-sf)" << endl;
-    cout << "--symbolic-block-size 64|128|256 (default: 256)" << endl;
-    cout << "--symbolic-verify (compare GPU CSC arrays with CPU; requires auto or a GPU backend)" << endl;
-    cout << "--symbolic-no-fallback (fail on GPU symbolic errors; requires auto or a GPU backend)" << endl;
-    cout << "--residual-tol T (default: 1e-6; absolute ||Ax-b||_2 target)" << endl;
-    cout << "--max-refine-iters N|n (default: n = matrix order; 0 disables corrections)" << endl;
-    cout << "--progress to flush stage diagnostics while running (for timeout diagnosis)" << endl;
+    cerr << endl;
+    cerr << "GLU program V3.0" << endl;
+    cerr << "Usage: ./lu_cmd -i inputfile" << endl;
+    cerr << "Additional usage: ./lu_cmd -i inputfile -p" << endl;
+    cerr << "-p to enable perturbation" << endl;
+    cerr << "-u, --update-strategy right-looking|left-looking (default: right-looking)" << endl;
+    cerr << "-s, --scheduling level|synchronization-free (default: level; SF requires LL)" << endl;
+    cerr << "--sf-workers N (default: 0 = automatic; requires SF when nonzero)" << endl;
+    cerr << "--symbolic-backend auto|cpu|gpu|gpu-sf (default: auto; CPU/GPU-SF selected by input structure)" << endl;
+    cerr << "--symbolic-batch-cols N (default: 128; positive workspace slot limit)" << endl;
+    cerr << "--symbolic-sf-workers N (default: 0 = automatic; requires auto or gpu-sf)" << endl;
+    cerr << "--symbolic-pool-entries N / --symbolic-max-pool-entries N (0 = automatic; auto or gpu-sf)" << endl;
+    cerr << "--symbolic-block-size 64|128|256 (default: 256)" << endl;
+    cerr << "--symbolic-verify (compare GPU CSC arrays with CPU; requires auto or a GPU backend)" << endl;
+    cerr << "--symbolic-no-fallback (fail on GPU symbolic errors; requires auto or a GPU backend)" << endl;
+    cerr << "--residual-tol T (default: 1e-6; absolute ||x_GPU-x_CPU||_2 target; also Ax-b refinement tolerance)" << endl;
+    cerr << "--max-refine-iters N|n (default: n = matrix order; 0 disables corrections)" << endl;
+    cerr << "--cpu-reference FILE (default: KLU_standalone/test_result/<matrix>_x.txt beside lu_cmd)" << endl;
+    cerr << "--progress to flush stage diagnostics while running (for timeout diagnosis)" << endl;
 }
 
-int main(int argc, char** argv)
+static int run_solver(int argc, char** argv, GluTimings &timings, ostream &diagnostics)
 {
-    Timer t, total_timer, symbolic_timer;
+    Timer t, symbolic_timer;
     double preprocess_ms = 0., symbolic_ms = 0., csr_ms = 0.;
     double predict_ms = 0., leveling_ms = 0., symbolic_total_ms = 0.;
-    double numeric_ms = 0., solve_ms = 0., refinement_ms = 0., total_ms = 0.;
+    double numeric_ms = 0., solve_ms = 0., refinement_ms = 0.;
     SNicsLU *nicslu = nullptr;
 
     const char *matrixName = nullptr;
+    const char *cpu_reference_file = nullptr;
     bool PERTURB = false;
     bool progress = false;
     unsigned sf_workers = 0;
@@ -74,6 +77,11 @@ int main(int argc, char** argv)
                 return -1;
             }
             matrixName = argv[i+1];
+            i += 2;
+        }
+        else if (strcmp(argv[i], "--cpu-reference") == 0) {
+            if (i + 1 >= argc) { help_message(); return -1; }
+            cpu_reference_file = argv[i + 1];
             i += 2;
         }
         else if (strcmp(argv[i], "-p") == 0) {
@@ -230,169 +238,237 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    // Task 1 S2: T_gpu is the complete heterogeneous solve wall time,
-    // including input preparation, CPU work, transfers and GPU synchronization.
+    glu_timing_switch(&timings, GLU_ANALYSIS_OTHER);
     auto report_stage = [&](const char *stage) {
-        if (progress)
-            cerr << "[stage] " << stage << endl;
+        if (progress) {
+            glu_timing::Scope phase(GLU_LOGGING);
+            diagnostics << "[stage] " << stage << endl;
+        }
     };
     report_stage("input/preprocessing started");
-    total_timer.start();
-    nicslu = static_cast<SNicsLU *>(malloc(sizeof(SNicsLU)));
+    {
+        glu_timing::Scope phase(GLU_CONTEXT_INIT);
+        nicslu = static_cast<SNicsLU *>(malloc(sizeof(SNicsLU)));
+    }
     if (nicslu == nullptr) {
-        cerr << "Failed to allocate NicsLU context." << endl;
+        diagnostics << "Failed to allocate NicsLU context." << endl;
+        glu_timing_switch(&timings, GLU_CLEANUP);
         return -1;
     }
 
-    // Keep the original matrix and the reordered/scaled matrix B in CSR.
+    // Keep both the original matrix and the reordered/scaled matrix in CSR.
     t.start();
-    int err = preprocess(matrixName, nicslu, &ax, &ai, &ap, &ax_backup, &ai_backup, &ap_backup, &nnz_backup);
-    if (err)
-    {
-        cerr << "Matrix preprocessing failed." << endl;
-        free(nicslu);
-        return -1;
-    }
+    int err = preprocess_timed(matrixName, nicslu, &ax, &ai, &ap,
+        &ax_backup, &ai_backup, &ap_backup, &nnz_backup, &timings);
     t.elapsedWallclockTime(preprocess_ms);
-
+    if (err) {
+        diagnostics << "Matrix preprocessing failed." << endl;
+        glu_timing_switch(&timings, GLU_CLEANUP);
+        free(nicslu);
+        return -1;
+    }
     n = nicslu->n;
-    if (refine_limit_is_order)
-        max_refine_iters = n;
+    if (refine_limit_is_order) max_refine_iters = n;
 
-    // Keep benchmark diagnostics buffered unless live progress was requested.
-    std::ostringstream solver_output;
-    ostream &diagnostics = progress ? cout : solver_output;
-    report_stage("symbolic fill-in started");
-    symbolic_timer.start();
-    t.start();
+    auto release_host = [&]() {
+        glu_timing_switch(&timings, GLU_CLEANUP);
+        NicsLU_Destroy(nicslu);
+        free(nicslu);
+        free(ax); free(ai); free(ap);
+        free(ax_backup); free(ai_backup); free(ap_backup);
+    };
 
-    // B's CSR arrays are also CSC arrays of B^T. Analyze and factor B^T;
-    // solve_CSR below uses the transpose factors to solve the original system.
-    Symbolic_Matrix A_sym(n, diagnostics, cerr);
+    // Analyze/factor B^T, then solve the original system with transpose factors.
+    Symbolic_Matrix A_sym(n, diagnostics, diagnostics);
     try {
-        A_sym.fill_in(ai, ap, symbolic_config);
-    } catch (const std::exception &e) {
-        cout << solver_output.str();
-        cerr << "Symbolic factorization failed: " << e.what() << endl;
-        NicsLU_Destroy(nicslu);
-        free(nicslu);
-        free(ax); free(ai); free(ap);
-        free(ax_backup); free(ai_backup); free(ap_backup);
-        return -1;
-    }
-    t.elapsedWallclockTime(symbolic_ms);
-
-    report_stage("CSR construction started");
-    t.start();
-    A_sym.csr();
-    t.elapsedWallclockTime(csr_ms);
-
-    report_stage("numeric value preparation started");
-    t.start();
-    A_sym.predictLU(ai, ap, ax);
-    t.elapsedWallclockTime(predict_ms);
-
-    if (scheduling == SchedulingStrategy::Level) {
-        report_stage("level generation started");
+        report_stage("symbolic fill-in started");
+        symbolic_timer.start();
         t.start();
-        A_sym.leveling();
-        t.elapsedWallclockTime(leveling_ms);
-    }
-    symbolic_timer.elapsedWallclockTime(symbolic_total_ms);
+        {
+            glu_timing::Scope phase(GLU_SYMBOLIC);
+            A_sym.fill_in(ai, ap, symbolic_config);
+        }
+        t.elapsedWallclockTime(symbolic_ms);
+        report_stage("CSR construction started");
+        t.start();
+        {
+            glu_timing::Scope phase(GLU_ANALYSIS_OTHER);
+            A_sym.csr();
+        }
+        t.elapsedWallclockTime(csr_ms);
+        report_stage("numeric value preparation started");
+        t.start();
+        {
+            glu_timing::Scope phase(GLU_PREPROCESS);
+            A_sym.predictLU(ai, ap, ax);
+        }
+        t.elapsedWallclockTime(predict_ms);
+        if (scheduling == SchedulingStrategy::Level) {
+            report_stage("level generation started");
+            t.start();
+            {
+                glu_timing::Scope phase(GLU_ANALYSIS_OTHER);
+                A_sym.leveling();
+            }
+            t.elapsedWallclockTime(leveling_ms);
+        }
+        symbolic_timer.elapsedWallclockTime(symbolic_total_ms);
 
 #if GLU_DEBUG
-    A_sym.ABFTCalculateCCA();
-//    A_sym.PrintLevel();
+        { glu_timing::Scope phase(GLU_PREPROCESS); A_sym.ABFTCalculateCCA(); }
 #endif
+        std::ostringstream numeric_errors;
+        glu_timing::LogBuffer error_buffer(numeric_errors.rdbuf());
+        ostream errors(&error_buffer);
+        report_stage("GPU numeric LU started");
+        t.start();
+        LUonDevice(A_sym, diagnostics, errors, PERTURB, update_strategy, scheduling, sf_workers);
+        t.elapsedWallclockTime(numeric_ms);
+        if (!numeric_errors.str().empty()) {
+            diagnostics << numeric_errors.str();
+            release_host();
+            return -1;
+        }
+#if GLU_DEBUG
+        { glu_timing::Scope phase(GLU_RESIDUAL_CHECK); A_sym.ABFTCheckResult(); }
+#endif
+        vector<REAL> b;
+        vector<long double> x;
+        {
+            glu_timing::Scope phase(GLU_RHS_READ);
+            b.assign(n, 1.);
+        }
+        report_stage("CPU triangular solve started");
+        t.start();
+        {
+            glu_timing::Scope phase(GLU_TRIANGULAR_SOLVE);
+            const vector<REAL> initial_x = A_sym.solve_CSR(nicslu, b);
+            glu_timing::Scope host_path(GLU_REFINEMENT);
+            x.assign(initial_x.begin(), initial_x.end());
+        }
+        t.elapsedWallclockTime(solve_ms);
+        report_stage("iterative refinement started");
+        RefinementResult refinement;
+        t.start();
+        {
+            glu_timing::Scope phase(GLU_REFINEMENT);
+            diagnostics << std::setprecision(std::numeric_limits<REAL>::max_digits10)
+                << "Refinement Ax-b L2 tolerance: " << residual_tolerance << '\n'
+                << "Refinement max iterations: " << max_refine_iters << '\n';
+            refinement = RefineCSR(n, ax_backup, ai_backup, ap_backup,
+                b, x, residual_tolerance, max_refine_iters,
+                [&](const vector<REAL> &rhs) { return A_sym.solve_CSR(nicslu, rhs); },
+                &diagnostics);
+        }
+        t.elapsedWallclockTime(refinement_ms);
+        report_stage("solve completed");
 
-    // Numeric factorization on GPU updates A_sym.val in place to LU factors.
-    std::ostringstream numeric_errors;
-    report_stage("GPU numeric LU started");
-    t.start();
-    LUonDevice(A_sym, diagnostics, numeric_errors, PERTURB, update_strategy, scheduling, sf_workers);
-    t.elapsedWallclockTime(numeric_ms);
-    if (!numeric_errors.str().empty()) {
-        cout << solver_output.str();
-        cerr << numeric_errors.str();
-        NicsLU_Destroy(nicslu);
-        free(nicslu);
-        free(ax); free(ai); free(ap);
-        free(ax_backup); free(ai_backup); free(ap_backup);
+        // Independent final verification is postprocessing. Refinement's own
+        // convergence residuals remain in refinement, including with a zero cap.
+        ResidualNorms residual;
+        SolutionError solution_error;
+        {
+            glu_timing::Scope phase(GLU_RESIDUAL_CHECK);
+            vector<REAL> work;
+            residual = ResidualCSR(n, ax_backup, ai_backup, ap_backup, b, x, work);
+        }
+        string reference_path;
+        bool solution_converged;
+        {
+            // Reference-file I/O and comparison are evaluation only: pause all
+            // stage timers, including post_s, until this scope has ended.
+            glu_timing::Scope evaluation(GLU_TIMING_IDLE);
+            reference_path = cpu_reference_file ? cpu_reference_file : DefaultCPUReferencePath(matrixName);
+            const vector<double> cpu_x = ReadCPUReference(reference_path, n);
+            solution_error = CompareSolutions(x, cpu_x);
+            solution_converged = std::isfinite(solution_error.absolute_l2)
+                && solution_error.absolute_l2 <= residual_tolerance;
+        }
+        {
+            glu_timing::Scope phase(GLU_OUTPUT_WRITE);
+            ofstream x_f("x.dat");
+            x_f << std::scientific << std::setprecision(std::numeric_limits<long double>::max_digits10);
+            for (long double xx : x) x_f << xx << '\n';
+            x_f.close();
+            if (!x_f) throw std::runtime_error("Failed to write x.dat");
+        }
+        {
+            glu_timing::Scope phase(GLU_LOGGING);
+            diagnostics << "Matrix Row: " << n << '\n'
+                << "Original nonzero: " << nicslu->nnz << '\n'
+                << std::fixed << std::setprecision(6)
+                << "Input/preprocessing time: " << preprocess_ms << " ms\n"
+                << "Symbolic time: " << symbolic_ms << " ms\n"
+                << "CSR time: " << csr_ms << " ms\n"
+                << "PredictLU time: " << predict_ms << " ms\n"
+                << "Leveling time: " << leveling_ms << " ms\n"
+                << "Symbolic preparation time (total): " << symbolic_total_ms << " ms\n"
+                << "Numeric LU time (including GPU setup/transfers): " << numeric_ms << " ms\n"
+                << "Triangular solve time (CPU): " << solve_ms << " ms\n"
+                << "Iterative refinement time (CPU): " << refinement_ms << " ms\n"
+                << "Refinement iterations: " << refinement.iterations << '\n'
+                << "Refinement status: " << refinement.status << '\n'
+                << "CPU reference file: " << reference_path << '\n'
+                << std::scientific << std::setprecision(std::numeric_limits<long double>::max_digits10)
+                << "GPU-CPU absolute L2 error: " << solution_error.absolute_l2 << '\n'
+                << "GPU-CPU relative L2 error: " << solution_error.relative_l2 << '\n'
+                << "GPU-CPU absolute L2 tolerance: " << residual_tolerance << '\n'
+                << "GPU-CPU comparison status: " << (solution_converged ? "converged" : "not_converged") << '\n'
+                << "Ax-b (1-norm): " << residual.l1 << '\n'
+                << "Ax-b (2-norm): " << residual.l2 << '\n'
+                << "Ax-b (infinite-norm): " << residual.linf << endl;
+            if (!solution_converged)
+                diagnostics << "GPU-CPU absolute L2 target not reached." << endl;
+        }
+        release_host();
+        return solution_converged ? 0 : 2;
+    } catch (const std::exception &e) {
+        diagnostics << "Solver failed: " << e.what() << endl;
+        release_host();
         return -1;
     }
+}
 
-#if GLU_DEBUG
-    A_sym.ABFTCheckResult();
-#endif
-
-    // Solve Ax=b with the computed factors and NICSLU permutations/scales.
-    vector<REAL> b(n, 1.);
-    report_stage("CPU triangular solve started");
-    t.start();
-    // Retain corrections smaller than the spacing of the double solution.
-    vector<long double> x;
-    {
-        const vector<REAL> initial_x = A_sym.solve_CSR(nicslu, b);
-        x.assign(initial_x.begin(), initial_x.end());
+int main(int argc, char **argv)
+{
+    GluTimings timings;
+    glu_timing_init(&timings);
+    glu_timing::Session session(timings);
+    glu_timing::LogBuffer log_buffer(cerr.rdbuf());
+    ostream diagnostics(&log_buffer);
+    const int status = run_solver(argc, argv, timings, diagnostics);
+    // run_solver's containers and symbolic matrix have also been destroyed.
+    glu_timing_switch(&timings, GLU_LOGGING);
+    if (status == 0 || status == 2) {
+        static const char *names[] = {
+            "read_parse", "rhs_read", "preprocess", "ordering", "symbolic",
+            "analysis_other", "context_init", "workspace_alloc", "kernel_compile",
+            "plan_upload", "cleanup", "value_h2d", "numeric_factor",
+            "triangular_solve", "solution_d2h", "refinement", "sync",
+            "residual_check", "output_write", "logging"
+        };
+        diagnostics << std::fixed << std::setprecision(9);
+        for (int stage = 0; stage < GLU_STAGE_COUNT; ++stage) {
+            glu_timing_switch(&timings, GLU_LOGGING);
+            diagnostics << names[stage] << "_s=" << timings.seconds[stage] << '\n';
+        }
+        diagnostics << "factor_d2h_s=" << timings.factor_d2h_s
+            << " (included in refinement: host solve path preparation)\n";
+        const double once = glu_timing_sum(&timings, GLU_READ_PARSE, GLU_CLEANUP);
+        const double solve = glu_timing_sum(&timings, GLU_VALUE_H2D, GLU_SYNC);
+        // Match the six-decimal terminal values used by the batch evaluator.
+        diagnostics << "total_solve_ms="
+            << (0.005 * (std::round(once * 1.e6) / 1.e6)
+                + std::round(solve * 1.e6) / 1.e6) * 1000.0 << endl;
     }
-    t.elapsedWallclockTime(solve_ms);
-    report_stage("residual check / iterative refinement started");
-    t.start();
-    diagnostics << std::setprecision(std::numeric_limits<REAL>::max_digits10)
-                << "Residual L2 tolerance: " << residual_tolerance << '\n'
-                << "Refinement max iterations: " << max_refine_iters << '\n';
-    const RefinementResult refinement = RefineCSR(n, ax_backup, ai_backup, ap_backup,
-        b, x, residual_tolerance, max_refine_iters,
-        [&](const vector<REAL> &rhs) { return A_sym.solve_CSR(nicslu, rhs); },
-        &diagnostics);
-    t.elapsedWallclockTime(refinement_ms);
-    // Include the initial residual check and every correction in T_gpu.
-    total_timer.elapsedWallclockTime(total_ms);
-    report_stage("solve completed");
-
-    cout << "Matrix Row: " << n << endl;
-    cout << "Original nonzero: " << nicslu->nnz << endl;
-    cout << solver_output.str();
-    std::ostringstream timing_output;
-    timing_output << std::fixed << std::setprecision(6)
-        << "Input/preprocessing time: " << preprocess_ms << " ms\n"
-        << "Symbolic time: " << symbolic_ms << " ms\n"
-        << "CSR time: " << csr_ms << " ms\n"
-        << "PredictLU time: " << predict_ms << " ms\n"
-        << "Leveling time: " << leveling_ms << " ms\n"
-        << "Symbolic preparation time (total): " << symbolic_total_ms << " ms\n"
-        << "Numeric LU time (including GPU setup/transfers): " << numeric_ms << " ms\n"
-        << "Triangular solve time (CPU): " << solve_ms << " ms\n"
-        << "Iterative refinement time (CPU): " << refinement_ms << " ms\n"
-        << "Task 1 total solve time (T_gpu): " << total_ms << " ms\n";
-    cout << timing_output.str();
-
-    cout << "Refinement iterations: " << refinement.iterations << '\n'
-         << "Refinement status: " << refinement.status << '\n';
-
-    // Serialization and reporting are outside T_gpu; residual evaluation is inside.
-    {
-        ofstream x_f("x.dat");
-        x_f << std::scientific << std::setprecision(std::numeric_limits<long double>::max_digits10);
-        for (long double xx: x)
-            x_f << xx << '\n';
+    diagnostics.flush();
+    glu_timing_switch(&timings, GLU_TIMING_IDLE);
+    if (status == 0 || status == 2) {
+        const double once = glu_timing_sum(&timings, GLU_READ_PARSE, GLU_CLEANUP);
+        const double solve = glu_timing_sum(&timings, GLU_VALUE_H2D, GLU_SYNC);
+        const double post = glu_timing_sum(&timings, GLU_RESIDUAL_CHECK, GLU_LOGGING);
+        cout << std::fixed << std::setprecision(6)
+             << "once_s=" << once << " solve_s=" << solve << " post_s=" << post << '\n';
     }
-
-    cout << std::setprecision(std::numeric_limits<REAL>::max_digits10)
-         << "Ax-b (1-norm): " << refinement.residual.l1 << '\n'
-         << "Ax-b (2-norm): " << static_cast<double>(refinement.residual.l2) << '\n'
-         << "Ax-b (infinite-norm): " << refinement.residual.linf << endl;
-    if (!refinement.converged)
-        cerr << "Residual L2 target not reached (" << refinement.status << ")." << endl;
-
-    NicsLU_Destroy(nicslu);
-    free(nicslu);
-    free(ax);
-    free(ai);
-    free(ap);
-    free(ax_backup);
-    free(ai_backup);
-    free(ap_backup);
-
-    return refinement.converged ? 0 : 2;
+    return status;
 }

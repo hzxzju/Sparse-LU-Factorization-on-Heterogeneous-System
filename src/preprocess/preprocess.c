@@ -4,6 +4,18 @@
 #include "math.h"
 #include "nicslu.h"
 #include "nicslu_util.h"
+#include "preprocess.h"
+#include <stdarg.h>
+
+static void progress_log(GluTimings *timings, const char *format, ...)
+{
+    GluStage previous = glu_timing_switch(timings, GLU_LOGGING);
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    glu_timing_switch(timings, previous);
+}
 
 int my_DumpA(SNicsLU *nicslu, double **ax, unsigned int **ai, unsigned int **ap)
 {
@@ -102,12 +114,23 @@ FAIL:
 int preprocess(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned int **ai, unsigned int **ap, \
     double **ax_backup, unsigned int **ai_backup, unsigned int **ap_backup, unsigned int *nnz_backup)
 {
+    return preprocess_timed(matrixName, nicslu, ax, ai, ap, ax_backup, ai_backup,
+        ap_backup, nnz_backup, NULL);
+}
+
+int preprocess_timed(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned int **ai, unsigned int **ap,
+    double **ax_backup, unsigned int **ai_backup, unsigned int **ap_backup, unsigned int *nnz_backup,
+    GluTimings *timings)
+{
     int ret = NICS_OK;
     uint__t n = 0;
     uint__t nnz = 0;
+    GluStage previous;
 
     if (matrixName == NULL || nicslu == NULL || ax == NULL || ai == NULL || ap == NULL)
         return -1;
+
+    previous = glu_timing_switch(timings, GLU_CONTEXT_INIT);
 
     *ax = NULL;
     *ai = NULL;
@@ -120,27 +143,29 @@ int preprocess(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned in
     // Caller owns nicslu; preprocess only initializes and analyzes it.
     NicsLU_Initialize(nicslu);
 
-    printf("Reading matrix...\n");
+    progress_log(timings, "Reading matrix...\n");
+    glu_timing_switch(timings, GLU_READ_PARSE);
 
     // NICSLU API takes non-const file path but does not modify it.
     ret = NicsLU_ReadTripletRowToSparse((char *)matrixName, &n, &nnz, ax, ai, ap);
     if (ret == NICSLU_MATRIX_INVALID)
     {    
-        printf("Read invalid matrix\n");
+        progress_log(timings, "Read invalid matrix\n");
         goto EXIT;
     }
     else if (ret == NICSLU_FILE_CANNOT_OPEN) 
     {    
-        printf("File cannot open\n");
+        progress_log(timings, "File cannot open\n");
         goto EXIT;
     }
     else if (ret != NICS_OK) 
     {    
-        printf("Open file error\n");
+        progress_log(timings, "Open file error\n");
         goto EXIT;
     }
 
     *nnz_backup = nnz;
+    glu_timing_switch(timings, GLU_PREPROCESS);
 
     /* Deep-copy original matrix for residual verification later */
     *ax_backup = (double *)malloc(sizeof(double) * nnz);
@@ -148,7 +173,7 @@ int preprocess(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned in
     *ap_backup = (unsigned int *)malloc(sizeof(unsigned int) * (n + 1));
     if (NULL == *ax_backup || NULL == *ai_backup || NULL == *ap_backup)
     {
-        printf("Backup memory allocation failed\n");
+        progress_log(timings, "Backup memory allocation failed\n");
         goto EXIT;
     }
     memcpy(*ax_backup, *ax, sizeof(double) * nnz);
@@ -158,27 +183,27 @@ int preprocess(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned in
     ret = NicsLU_CreateMatrix(nicslu, n, nnz, *ax, *ai, *ap);
     if (ret != NICS_OK)
     {
-        printf("Create matrix error (NICSLU code %d)\n", ret);
+        progress_log(timings, "Create matrix error (NICSLU code %d)\n", ret);
         goto EXIT;
     }
 
     nicslu->cfgi[0] = 0; /* CSR input; NICSLU solve/residual use this mode. */
     nicslu->cfgf[1] = 0;
 
-    printf("Preprocessing matrix...\n");
+    progress_log(timings, "Preprocessing matrix...\n");
 
-    ret = NicsLU_Analyze(nicslu);
+    ret = NicsLU_AnalyzeTimed(nicslu, timings);
     if (ret != NICS_OK)
     {
-        printf("Analyze matrix error\n");
+        progress_log(timings, "Analyze matrix error\n");
         goto EXIT;
     }
-    printf("Preprocessing time: %f ms\n", nicslu->stat[0] * 1000);
+    progress_log(timings, "Preprocessing time: %f ms\n", nicslu->stat[0] * 1000);
 
     ret = my_DumpA(nicslu, ax, ai, ap);
     if (ret != 0)
     {
-        printf("DumpA failed\n");
+        progress_log(timings, "DumpA failed\n");
         goto EXIT;
     }
     //rp = nicslu->col_perm;
@@ -188,8 +213,10 @@ int preprocess(const char *matrixName, SNicsLU *nicslu, double **ax, unsigned in
     //cols = nicslu->row_scale;
     //cscale = nicslu->cscale;
 
+    glu_timing_switch(timings, previous);
     return 0;
 EXIT:
+    glu_timing_switch(timings, GLU_CLEANUP);
     // Keep ownership simple: destroy NICSLU internals, but do not free caller memory.
     NicsLU_Destroy(nicslu);
     if (*ax != NULL)
@@ -222,6 +249,7 @@ EXIT:
         free(*ap_backup);
         *ap_backup = NULL;
     }
+    glu_timing_switch(timings, previous);
     return -1;
 
 }

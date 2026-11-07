@@ -9,7 +9,7 @@ HTCC ?= $(HPCC_PATH)/htgpu_llvm/bin/htcc
 export GCC_TOOLCHAIN GCC_VERSION
 
 EXE = lu_cmd
-OBJS = Timer.o numeric.o symbolic.o symbolic_gpu.o lu_cmd.o
+OBJS = Timer.o numeric.o symbolic.o symbolic_gpu.o lu_cmd.o solution_error.o
 PREPROCESS_LIBS = preprocess/preprocess.o nicslu/lib/nicslu.a nicslu/util/nicslu_util.a
 LU_INC = -Ipreprocess -I../include -Inicslu/include
 CPPFLAGS += $(LU_INC) -DGLU_DEBUG=$(DEBUG)
@@ -21,13 +21,16 @@ HTCC_CPPFLAGS = -D__sync_threads=__syncthreads
 LDFLAGS += -Wl,-rpath,$(GCC_TOOLCHAIN)/lib64 -Wl,-rpath,$(HPCC_PATH)/lib
 LDLIBS += -lpthread -lm -lrt -ldl
 
-.PHONY: MAIN all clean distclean test-symbolic-gpu test-symbolic-host test-symbolic-auto test-symbolic-sf-gpu test-symbolic-sf-host test-gpu-device-selection
+.PHONY: MAIN all clean distclean test-symbolic-gpu test-symbolic-host test-symbolic-auto test-symbolic-sf-gpu test-symbolic-sf-host test-gpu-device-selection test-ll-sf-host
 .DELETE_ON_ERROR:
 MAIN: $(EXE)
 all: MAIN
 
 $(EXE): $(OBJS) $(PREPROCESS_LIBS) Makefile
 	$(HTCC) $(HTCC_GCC_FLAGS) $(LDFLAGS) $(OBJS) $(PREPROCESS_LIBS) $(LDLIBS) -o $@
+
+solution_error.o: solution_error.cpp ../include/solution_error.h Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 Timer.o: Timer.cpp Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
@@ -77,6 +80,12 @@ symbolic_sf_host_test: symbolic.o ../tests/symbolic_sf_host.cpp symbolic_sf.cuh 
 test-symbolic-sf-host: symbolic.o symbolic_sf_host_test
 	./symbolic_sf_host_test
 
+left_looking_sf_host_test: symbolic.o ../tests/left_looking_sf_host.cpp left_looking_sf.cuh left_looking.cuh sf_sync.cuh Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -pthread ../tests/left_looking_sf_host.cpp symbolic.o -o $@
+
+test-ll-sf-host: left_looking_sf_host_test
+	./left_looking_sf_host_test
+
 gpu_device_selection_test: ../tests/gpu_device_selection.cpp ../include/gpu_device.h Makefile
 	$(HTCC) $(CPPFLAGS) $(HTCCFLAGS) $(HTCC_GCC_FLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
 
@@ -99,7 +108,7 @@ nicslu/util/nicslu_util.a: $(wildcard nicslu/util/*.c nicslu/util/*.h nicslu/inc
 	$(MAKE) -C nicslu util
 
 clean:
-	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test symbolic_auto_test
+	rm -f $(OBJS) $(OBJS:.o=.d) $(EXE) test_symbolic_gpu.o test_symbolic_gpu.d symbolic_gpu_test test_symbolic_gpu_numeric.o test_symbolic_gpu_numeric.d symbolic_gpu_numeric_test gpu_device_selection_test gpu_device_probe symbolic_sf_host_test symbolic_auto_test left_looking_sf_host_test
 	$(MAKE) -C preprocess clean
 	$(MAKE) -C nicslu/lib clean
 	$(MAKE) -C nicslu/util clean

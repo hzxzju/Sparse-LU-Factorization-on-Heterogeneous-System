@@ -14,6 +14,7 @@
 /src/symbolic_gpu_test
 /src/symbolic_auto_test
 /src/symbolic_sf_host_test
+/src/left_looking_sf_host_test
 /src/symbolic_gpu_numeric_test
 /src/gpu_device_selection_test
 /src/gpu_device_probe

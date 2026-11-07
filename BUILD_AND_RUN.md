@@ -20,6 +20,9 @@ make -C src clean
 make -C src MAIN
 ```
 
+The root Makefile also supports `make` (or `make MAIN`), `make clean` and
+`make distclean`, forwarding these commands to `src/`.
+
 The CPU preprocessing, symbolic and NICSLU sources remain on the GCC/G++ build
 path. The GPU translation unit and final executable use `htcc`; its HTHPCC
 language mode is marked in `src/Makefile`. `src/run.sh` sets the documented
@@ -65,84 +68,120 @@ from the repository root:
 SF requires LL and skips CPU level generation and GPU level/CSR uploads.
 The CPU still generates fill-in, symbolic CSC/CSR and initial numeric values.
 
-## Residual target and iterative refinement
+## Solution error and iterative refinement
 
-After the initial solve, `lu_cmd` checks the absolute residual
-`||Ax-b||_2 <= 1e-6`. If needed, it computes `r=b-Ax` from the original CSR
-matrix, reuses `A_sym.solve_CSR` to solve for the correction, and updates
-`x += delta_x`. Permutations and scaling are handled by the same solve routine;
-the GPU factors are not recomputed.
+After each GLU solve, `lu_cmd` reads the existing CPU KLU solution from
+`src/KLU_standalone/test_result/<matrix_stem>_x.txt`; it does not run KLU.
+Both solutions must correspond to the original matrix and `b = ones(n)`.
+Here `x_GPU` means the final GLU solution (GPU LU plus CPU triangular solve
+and any refinement). Logs report scientific notation with at least 17 digits:
 
-```sh
-./src/lu_cmd -i src/matrix/ASIC_680ks_csr.mtx --residual-tol 1e-6 --max-refine-iters 10
-python3 src/run_batch.py --residual-tol 1e-6 --max-refine-iters 10
+```text
+GPU-CPU absolute L2 error: ...
+GPU-CPU relative L2 error: ...
 ```
 
-`--residual-tol` defaults to `1e-6` and must be finite and positive.
-`--max-refine-iters` defaults to `n` (the matrix order); an unsigned integer
-sets a fixed correction limit, and `0` disables corrections while retaining the
-residual check. An initially accurate solution needs no correction solves.
-Residuals use CPU `long double` accumulation, whose extra precision depends on
-the platform; factors, solutions and triangular solves remain double precision.
-Each accepted correction must lower residualL2. Stagnation or nonfinite arithmetic
-stops refinement early and preserves the best solution. Reaching the iteration
-limit without meeting the target is also a failure. The solver writes the best
-`x.dat` and returns **2** on a missed target, **0** on convergence.
-Solution files use scientific notation with at least 17 significant digits.
+These are `||x_GPU-x_CPU||_2` and `||x_GPU-x_CPU||_2 / ||x_CPU||_2`.
+Reference-file reading and solution comparison pause all stage timers, so they
+are excluded from `once_s`, `solve_s`, `post_s` and `total_solve_ms`.
+The existing CPU files are only read. Missing, malformed, nonfinite or
+wrong-length reference vectors cause an explicit error.
 
-Logs record the tolerance, resolved iteration limit, initial and per-iteration
-residuals, attempted correction count, status (`converged`, `max_iterations`,
-`stagnated`, `nonfinite`) and `Iterative refinement time (CPU)`.
-Batch CSV remains at 23 columns; these diagnostics stay in `solver.log` and the
-extra time is included in `total_solve_ms`. Batch `status=ok` also requires the
-specified residual target; `residual_not_converged` records a missed target and
-the batch continues. A small residual does not guarantee a small solution error.
-Automatic refinement applies to the CLI/batch path, not the Python `pyglu` API.
-Static pivot perturbation (`-p`) does not guarantee improved residuals.
+```sh
+make -C src MAIN
+./src/lu_cmd -i src/matrix/add32_csr.mtx
+./src/lu_cmd -i src/matrix/add32_csr.mtx --cpu-reference /path/to/add32_csr_x.txt
+python3 src/run_batch.py --cpu-reference-dir src/KLU_standalone/test_result
+```
+
+`--residual-tol` defaults to `1e-6` (finite and positive). Exit code 0 means the
+absolute GPU/CPU L2 error meets this tolerance; 2 means it misses the target.
+Relative L2 error is reported separately and is not the acceptance criterion.
+For a zero CPU vector, relative error is 0 if both solutions are zero and
+infinity otherwise. Batch CSV has 29 columns: `solution_error_l2` and
+`relative_solution_error_l2` hold solution errors; `axb_residual_l1`,
+`axb_residual_l2`, `axb_residual_linf` hold auxiliary equation residuals.
+The old ambiguous `residual_l1/l2/linf` column names are removed.
+A missed comparison target is recorded as `residual_not_converged`.
+
+Iterative refinement still uses `r=b-Ax`, existing GLU factors and the same
+`--residual-tol` as its equation-residual stopping tolerance. It does not use
+the CPU reference to correct the solution. `--max-refine-iters` defaults to
+`n` (matrix order); `0` disables corrections. Refinement stops on convergence,
+the cap, stagnation or nonfinite arithmetic, preserving the best solution.
+`Refinement status` describes this internal Ax-b check; the separate
+`GPU-CPU comparison status` controls the final exit code. Updates and residual
+accumulation retain CPU `long double` precision; factors and solves stay double.
+`x.dat` preserves the final extended-precision GLU solution.
+
+Refinement remains in `solve_s`; independent final Ax-b checks and output are
+in `post_s`. `total_solve_ms = (0.005 * once_s + solve_s) * 1000`.
+After cleanup, stdout contains only `once_s=... solve_s=... post_s=...`
+(seconds, six decimals); comparison results and diagnostics go to stderr.
+The Python `pyglu` API retains its existing behavior. See
+[src/RUN_BATCH.md](src/RUN_BATCH.md) for all output and timing definitions.
 
 ## Task 1 timing
 
-The contest guide (pages 6-7 and 9) scores speedup as
-`SR_i,k = T_cpu,k / T_gpu,i,k`. `T_gpu` is the complete solve **wall-clock**
-time, including CPU preparation, GPU setup, transfers, computation,
-synchronization and result return. The CLI now prints these times in milliseconds:
+The CLI uses `clock_gettime(CLOCK_MONOTONIC, ...)` for stage wall times.
+After host/device cleanup, stdout contains exactly one timing line in seconds,
+with six decimal places:
 
-| Output | Measured scope |
+```text
+once_s=7.767300 solve_s=0.555000 post_s=0.020000
+```
+
+The batch CSV and terminal `total_solve_ms` are the weighted result:
+`(0.005 * once_s + solve_s) * 1000`. For the example above this is
+`593.8365 ms`. Postprocessing is excluded from the score. The rounded stdout
+values are authoritative for this calculation; historical unweighted
+`Task 1 total solve time (T_gpu)` logs are not used.
+
+| Aggregate | Exclusive stage fields (seconds, stderr labels end in `_s=`) |
 | --- | --- |
-| `Input/preprocessing time` | The entire `preprocess` call: file reading, matrix backup/construction, NICSLU ordering/scaling and extraction of the prepared matrix. |
-| `Symbolic time` | Symbolic matrix construction and fill-in analysis. |
-| `CSR time`, `PredictLU time`, `Leveling time` | CSR generation, numeric value preparation and level scheduling; leveling is exactly zero for SF. |
-| `Symbolic preparation time (total)` | All four CPU preparation stages above, measured as one interval. |
-| `Numeric LU compute time (wall-clock)` | GPU numeric dispatch through completion of all kernels, including launches and synchronization across levels/streams; excludes allocation, initialization and transfers. |
-| `Numeric LU time (including GPU setup/transfers)` | The entire `LUonDevice` call, including device setup, allocations, uploads, compute, synchronization, factor download and GPU cleanup. |
-| `Triangular solve time (CPU)` | Initial `solve_CSR` only, including RHS permutation/scaling, forward/back substitution and restoring the original variable order. |
-| `Iterative refinement time (CPU)` | Initial residual check and all correction solves, updates and candidate residual checks. |
-| `Task 1 total solve time (T_gpu)` | From before NICSLU context allocation and input preparation until the final refined solution is available on the CPU. Use this value as the speedup denominator. |
+| `once_s` | `read_parse`, `rhs_read`, `preprocess`, `ordering`, `symbolic`, `analysis_other`, `context_init`, `workspace_alloc`, `kernel_compile`, `plan_upload`, `cleanup` |
+| `solve_s` | `value_h2d`, `numeric_factor`, `triangular_solve`, `solution_d2h`, `refinement`, `sync` |
+| `post_s` | `residual_check`, `output_write`, `logging` |
 
-All new measurements use `Timer::elapsedWallclockTime` with a monotonic
-`std::chrono::steady_clock`. GPU initialization completes before the compute
-timer starts, and every numeric path synchronizes kernel completion before it
-stops. CPU user time does not account for GPU waits and is no longer used for
-the CLI's symbolic timings. By default, solver diagnostics and timing summaries are printed
-after the total timer stops. With `--progress`, diagnostics and stage markers
-are flushed during execution (without per-kernel measurement); the existing C preprocessing progress messages
-remain inside the preprocessing interval.
+`read_parse` reads/parses the matrix; `rhs_read` generates the all-ones RHS.
+NICSLU MC64 matching/scaling and value packing belong to `preprocess`; AMD
+ordering belongs to `ordering`. CSR construction, level scheduling and backend
+selection belong to `analysis_other`. Device selection/probing belongs to
+`context_init`, device buffer allocation/initialization to `workspace_alloc`,
+and structural index/scheduling uploads to `plan_upload`. GPU symbolic work,
+including structural result downloads, belongs to the once-only analysis.
+There is no explicit runtime compiler in this ahead-of-time build, so
+`kernel_compile` is zero.
 
-The total timer includes RHS creation, the CLI's file input, the initial residual
-check and all refinement work; it stops before writing `x.dat`, reporting the
-residuals and final CPU cleanup. The contest's
-official interface/timing rules will be released with its cases (pages 9-10);
-use the same input boundary for CPU comparisons. Substage times are nested, so
-do not sum every printed line or substitute the legacy event-based `Total GPU
-time` for `T_gpu`.
+`value_h2d` only uploads numeric values. `numeric_factor` only covers numeric
+LU dispatch/computation and its completion waits. Device stages synchronize
+before their timer stops. Waits already included in stages are not charged a
+second time to `sync`, which is zero on the current paths. Nested phases pause
+the parent counter rather than double counting it.
 
-For a matching CPU baseline in milliseconds, compute
-`SR = cpu_ms / total_solve_ms`. Per-matrix performance scoring is
-`S2_i,k = 25 * min(SR_i,k / SR_best,k, 1)` for correct solutions, and zero for
-incorrect solutions; the final S2 is the average across matrices (pages 7-8).
-Timing alone does not establish correctness: S1 requires relative solution
-error `||x_gpu - x_ref||_2 / ||x_ref||_2 <= 1e-6` against a reference solution.
-The existing `Ax-b` residual output is a separate check.
+Triangular substitution runs on the CPU: `triangular_solve` covers the initial
+forward/back substitutions, while host-path preparation (factor download,
+permutation/scaling and solution conversion) is charged to `refinement`.
+`factor_d2h_s` is a diagnostic subset of `refinement`, not an extra charge or a
+solution-vector transfer. `solution_d2h` is zero because the CPU produces the
+solution. Correction solves, updates and residuals needed to choose/stop
+refinement all remain in `refinement`. Independent final residual verification
+belongs to `residual_check`, and writing/closing `x.dat` to `output_write`.
+GPU resource destruction and final NICSLU/host container destruction belong to
+`cleanup`, even though they occur at different points in the execution.
+
+Diagnostics go to stderr (batch merges them into `solver.log`). They include
+all exclusive stage counters, `factor_d2h_s`, and weighted `total_solve_ms`.
+Legacy millisecond stage descriptions remain for comparison; those inclusive
+intervals overlap and must not be added to the exclusive counters. In
+particular, `Numeric LU time (including GPU setup/transfers)` spans both once
+and solve work. `Total GPU time` now also uses the monotonic host clock.
+`--progress` adds stage markers on stderr. Diagnostic writes/flushes are
+charged to `logging`; final timing-report serialization is excluded from its
+own measurement to avoid a self-referential timing report.
+
+Timing alone does not establish correctness. The final `Ax-b` residual and
+convergence status are checked separately from the weighted score.
 
 ## Python extension
 

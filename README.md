@@ -148,41 +148,58 @@ The solver records stage timings without per-kernel profiling. Batch runs write
 `summary.csv`, per-matrix logs and solution files; see
 [src/RUN_BATCH.md](src/RUN_BATCH.md) for timing definitions and options.
 
-## CLI residual target and iterative refinement
+## CLI solution error and iterative refinement
 
-`lu_cmd` and `src/run_batch.py` automatically check the absolute residual
-`||Ax-b||_2 <= 1e-6` after the initial solve. If needed, they reuse the existing
-LU factors for correction solves: `r=b-Ax`, `delta_x=solve_CSR(r)`,
-`x += delta_x`. Solution updates and residual accumulation use CPU `long double`
-(extra precision depends on the platform); factors and correction solves remain
-double precision. The final L2 norm is reported as double, while `x.dat` retains
-the `long double` solution precision.
+After each GLU solve, `lu_cmd` reads the existing CPU KLU solution from
+`src/KLU_standalone/test_result/<matrix_stem>_x.txt`; it does not run KLU.
+Both solutions must correspond to the original matrix and `b = ones(n)`.
+Here `x_GPU` means the final GLU solution (GPU LU plus CPU triangular solve
+and any refinement). Logs report scientific notation with at least 17 digits:
+
+```text
+GPU-CPU absolute L2 error: ...
+GPU-CPU relative L2 error: ...
+```
+
+These are `||x_GPU-x_CPU||_2` and `||x_GPU-x_CPU||_2 / ||x_CPU||_2`.
+Reference-file reading and solution comparison pause all stage timers, so they
+are excluded from `once_s`, `solve_s`, `post_s` and `total_solve_ms`.
+The existing CPU files are only read. Missing, malformed, nonfinite or
+wrong-length reference vectors cause an explicit error.
 
 ```sh
 make -C src MAIN
-./src/lu_cmd -i src/matrix/ASIC_680ks_csr.mtx --residual-tol 1e-6 --max-refine-iters 10
-python3 src/run_batch.py --residual-tol 1e-6 --max-refine-iters 10
+./src/lu_cmd -i src/matrix/add32_csr.mtx
+./src/lu_cmd -i src/matrix/add32_csr.mtx --cpu-reference /path/to/add32_csr_x.txt
+python3 src/run_batch.py --cpu-reference-dir src/KLU_standalone/test_result
 ```
 
-`--residual-tol` defaults to `1e-6` (finite and positive).
-`--max-refine-iters` defaults to `n`, the matrix order; use an unsigned integer
-for a fixed cap or `0` to check without correcting. No correction solve runs
-when the initial result already meets the target. Refinement stops on success,
-the iteration limit, a residual that fails to decrease, or nonfinite arithmetic.
-Rejected updates leave the best solution intact. The solver still writes that
-solution to `x.dat`, returning 0 on convergence or 2 if the target is missed.
-The target is an absolute residual, not relative solution error.
+`--residual-tol` defaults to `1e-6` (finite and positive). Exit code 0 means the
+absolute GPU/CPU L2 error meets this tolerance; 2 means it misses the target.
+Relative L2 error is reported separately and is not the acceptance criterion.
+For a zero CPU vector, relative error is 0 if both solutions are zero and
+infinity otherwise. Batch CSV has 29 columns: `solution_error_l2` and
+`relative_solution_error_l2` hold solution errors; `axb_residual_l1`,
+`axb_residual_l2`, `axb_residual_linf` hold auxiliary equation residuals.
+The old ambiguous `residual_l1/l2/linf` column names are removed.
+A missed comparison target is recorded as `residual_not_converged`.
 
-Residual checks and refinement are included in total solve time. Logs include
-initial/per-iteration residuals, the limit, attempted iteration count, final
-status and a separate refinement time; `triangular_solve_time` covers the initial
-solve only. Batch CSV retains 23 columns, records a missed target as
-`residual_not_converged`, and continues. Residuals and solution files retain at
-least 17 significant digits. The additional cost is CPU work and O(n) temporary
-memory, without repeating GPU factorization. Automatic refinement applies to
-the CLI/batch path; the Python `pyglu` API retains its existing behavior.
-See [BUILD_AND_RUN.md](BUILD_AND_RUN.md) and
-[src/RUN_BATCH.md](src/RUN_BATCH.md) for timing and stopping details.
+Iterative refinement still uses `r=b-Ax`, existing GLU factors and the same
+`--residual-tol` as its equation-residual stopping tolerance. It does not use
+the CPU reference to correct the solution. `--max-refine-iters` defaults to
+`n` (matrix order); `0` disables corrections. Refinement stops on convergence,
+the cap, stagnation or nonfinite arithmetic, preserving the best solution.
+`Refinement status` describes this internal Ax-b check; the separate
+`GPU-CPU comparison status` controls the final exit code. Updates and residual
+accumulation retain CPU `long double` precision; factors and solves stay double.
+`x.dat` preserves the final extended-precision GLU solution.
+
+Refinement remains in `solve_s`; independent final Ax-b checks and output are
+in `post_s`. `total_solve_ms = (0.005 * once_s + solve_s) * 1000`.
+After cleanup, stdout contains only `once_s=... solve_s=... post_s=...`
+(seconds, six decimals); comparison results and diagnostics go to stderr.
+The Python `pyglu` API retains its existing behavior. See
+[src/RUN_BATCH.md](src/RUN_BATCH.md) for all output and timing definitions.
 
 ## Publications: 
 J1.  K. He, S. X.-D. Tan, H. Wang and G. Shi, “GPU-Accelerated Parallel Sparse LU Factorization Method for Fast Circuit Analysis”, IEEE Transactions on Very Large Scale Integrated Systems  (TVLSI), vol. 24, no.3, pp.1140-1150, March 2016.

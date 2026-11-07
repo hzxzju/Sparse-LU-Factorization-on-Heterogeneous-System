@@ -3,7 +3,7 @@
 int
 Timer::start()
 {
-    this->old_wc_time = std::chrono::steady_clock::now();
+    this->old_wc_time = glu_monotonic_now();
     if (getrusage (RUSAGE_SELF, &this->old_us_time) == -1)
         return -1;
     else
@@ -13,8 +13,8 @@ Timer::start()
 int
 Timer::elapsedWallclockTime (double &wc)
 {
-    wc = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - this->old_wc_time).count();
+    // Preserve the existing public API's millisecond unit.
+    wc = 1000.0 * glu_seconds_between(this->old_wc_time, glu_monotonic_now());
     return 0;
 }
 

@@ -53,11 +53,7 @@ int TimerStart(STimer *tmr)
 #ifdef _WIN32
 	return (QueryPerformanceCounter((LARGE_INTEGER *)&(tmr->start))==0 ? -1 : 0);
 #else
-#ifdef CLOCK_MONOTONIC
 	return clock_gettime(CLOCK_MONOTONIC, &(tmr->start));
-#else
-	return clock_gettime(CLOCK_REALTIME, &(tmr->start));
-#endif
 #endif
 }
 
@@ -71,11 +67,7 @@ int TimerStop(STimer *tmr)
 #ifdef _WIN32
 	return (QueryPerformanceCounter((LARGE_INTEGER *)&(tmr->stop))==0 ? -1 : 0);
 #else
-#ifdef CLOCK_MONOTONIC
 	return clock_gettime(CLOCK_MONOTONIC, &(tmr->stop));
-#else
-	return clock_gettime(CLOCK_REALTIME, &(tmr->stop));
-#endif
 #endif
 }
 

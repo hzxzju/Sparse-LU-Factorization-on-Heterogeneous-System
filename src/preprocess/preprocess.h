@@ -4,6 +4,7 @@
 #include "nics_config.h"
 #include "nicslu.h"
 #include "type.h"
+#include "../../include/stage_timing.h"
 
 #define IN__
 #define OUT__
@@ -39,6 +40,13 @@ int preprocess_from_arrays(
     OUT__ double **ax_out,
     OUT__ unsigned int **ai_out,
     OUT__ unsigned int **ap_out);
+
+int preprocess_timed(const char *matrixName, SNicsLU *nicslu,
+    double **ax, unsigned int **ai, unsigned int **ap,
+    double **ax_backup, unsigned int **ai_backup, unsigned int **ap_backup,
+    unsigned int *nnz_backup, GluTimings *timings);
+
+int NicsLU_AnalyzeTimed(SNicsLU *nicslu, GluTimings *timings);
 
 #ifdef __cplusplus
 }

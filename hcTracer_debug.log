@@ -1,0 +1,169 @@
+(Tracer): 16:53:59 [INFO ] Tracer startup
+(Tracer): 16:53:59 [INFO ] =====Debug Enable=====
+(Tracer): 16:53:59 [INFO ] =====Name Enable=====
+(Tracer): 16:53:59 [DEBUG] jsondata_etc:   {
+        "callback":     [{
+                        "action":       "ENABLE",
+                        "domain":       2,
+                        "cbid": [120, 75]
+                }, {
+                        "action":       "DISABLE",
+                        "domain":       2,
+                        "cbid": ["hcMemcpy", "hcLaunchKernel"]
+                }],
+        "activity":     [{
+                        "action":       "ENABLE",
+                        "kind": [1, 2, 4, 5, 10, 51]
+                }, {
+                        "action":       "DISABLE",
+                        "kind": [22]
+                }]
+}
+
+
+(Tracer): 16:53:59 [DEBUG] Use etc pti config file!
+(Tracer): 16:53:59 [DEBUG] pti config:   {
+        "callback":     [{
+                        "action":       "ENABLE",
+                        "domain":       2,
+                        "cbid": [120, 75]
+                }, {
+                        "action":       "DISABLE",
+                        "domain":       2,
+                        "cbid": ["hcMemcpy", "hcLaunchKernel"]
+                }],
+        "activity":     [{
+                        "action":       "ENABLE",
+                        "kind": [1, 2, 4, 5, 10, 51]
+                }, {
+                        "action":       "DISABLE",
+                        "kind": [22]
+                }]
+}
+
+
+(Tracer): 16:53:59 [DEBUG] Shell command: export HPCC_HCTX_PROTO_VERSION =0x201 && ./src/lu_cmd -i src/nicslu/demo/ASIC_100k.mtx -u left-looking -s synchronization-free
+(Tracer): 16:53:59 [INFO ] cmdlines: ./src/lu_cmd
+(Tracer): 16:53:59 [INFO ] cmdlines: -i
+(Tracer): 16:53:59 [INFO ] cmdlines: src/nicslu/demo/ASIC_100k.mtx
+(Tracer): 16:53:59 [INFO ] cmdlines: -u
+(Tracer): 16:53:59 [INFO ] cmdlines: left-looking
+(Tracer): 16:53:59 [INFO ] cmdlines: -s
+(Tracer): 16:53:59 [INFO ] cmdlines: synchronization-free
+(Tracer): 16:53:59 [DEBUG] Can not open port file.
+Reading matrix...
+(Tracer): 16:53:59 [DEBUG] Can not open port file.
+(Tracer): 16:53:59 [DEBUG] Can not open port file.
+(Tracer): 16:54:00 [DEBUG] Can not open port file.
+Preprocessing matrix...
+(Tracer): 16:54:00 [DEBUG] Can not open port file.
+Preprocessing time: 89.020691 ms
+Symbolic requested backend: auto
+symbolic_auto_input_nnz: 954163
+symbolic_auto_max_column_nnz: 99029
+symbolic_auto_copy_lower_bound: 17600082599
+symbolic_auto_ms: 0.090286
+Symbolic auto selected backend: gpu-sf
+(Tracer): 16:54:00 [DEBUG] out dir name: /src/trace_files/trace_debug_20261105_165359, out file name: lu-3335565
+(Tracer): 16:54:00 [INFO ] Waiting rpc server start...
+(Tracer): 16:54:00 [DEBUG] Rpc server ip:0.0.0.0, port:39867
+(Tracer): 16:54:00 [DEBUG] hctxTracerConnectAck return value: 1
+(Tracer): 16:54:00 [INFO ] Rpc connection established!
+(Tracer): 16:54:00 [ERROR] Failed to create /home/eda260729/workspace/task1_working/Sparse-LU-Factorization-on-Heterogeneous-System//src/trace_files/trace_debug_20261105_165359, errno: No such file or directory
+(Tracer): 16:54:00 [DEBUG] out_json: /home/eda260729/workspace/task1_working/Sparse-LU-Factorization-on-Heterogeneous-System//src/trace_files/trace_debug_20261105_165359/lu-3335565.json, out_protobuf: /home/eda260729/workspace/task1_working/Sparse-LU-Factorization-on-Heterogeneous-System//src/trace_files/trace_debug_20261105_165359/lu-3335565.pftrace
+(Tracer): 16:54:00 [FATAL] Output file open error!.
+
+GPU selection: trying device 0
+GPU selection: device 0 ready (Mars X201)
+GPU symbolic SF workers: 208, block size: 256, bitmap bytes: 5166720, pool capacity: 3816652, chunk capacity: 477081
+GPU symbolic SF pool retry: error=1, capacity=3816652 -> 7633304
+GPU symbolic SF workers: 208, block size: 256, bitmap bytes: 5166720, pool capacity: 7633304, chunk capacity: 954163
+symbolic_gpu_compute_ms: 2370.97
+symbolic_gpu_pack_ms: 1.6418
+symbolic_gpu_h2d_ms: 0.983449
+symbolic_gpu_d2h_ms: 4.23994
+symbolic_workers: 208
+symbolic_input_nnz: 954163
+symbolic_output_nnz: 4008604
+symbolic_fill_ratio: 4.20117
+symbolic_bitmap_bytes: 5166720
+symbolic_peak_workspace_bytes: 121043772
+symbolic_checkpoint_pool_used: 3705998
+symbolic_checkpoint_pool_capacity: 7633304
+symbolic_checkpoint_chunks_used: 219182
+symbolic_checkpoint_chunk_capacity: 954163
+symbolic_final_pool_used: 4008604
+symbolic_final_pool_capacity: 7633304
+symbolic_task_parks: 1410308
+symbolic_task_wakeups: 1410307
+symbolic_pred_merges: 3909101
+symbolic_predecessor_rows_read: 1114554581
+symbolic_duplicate_rows_eliminated: 1108644379
+symbolic_checkpoint_rows_restored: 1364130633
+symbolic_input_rows_read: 1908326
+symbolic_empty_queue_polls: 21413885
+symbolic_closed_wait_races: 113100
+symbolic_oom_retries: 1
+symbolic_cpu_fallback_count: 0
+Symbolic backend: gpu-sf (fill-in; CSR/values/levels on CPU)
+Symbolic nonzero: 4008604
+symbolic_gpu_total_ms: 2474.31
+GPU selection: trying device 0
+GPU selection: device 0 ready (Mars X201)
+Device 0: Mars X201 has been selected.
+Numeric update strategy: left-looking
+Numeric scheduling: synchronization-free
+LL-SF workers: 208, workspace bytes: 165301760
+LL-SF kernel launch; waiting for completion...
+LL-SF kernel completed.
+Total GPU time: 174.527 ms
+Numeric LU compute time (wall-clock): 167.15 ms
+Residual L2 tolerance: 9.9999999999999995e-07
+Refinement max iterations: 99340
+Refinement initial residual L2: 6.0606695527580158e-09
+Matrix Row: 99340
+Original nonzero: 954163
+Input/preprocessing time: 465.314528 ms
+Symbolic time: 2474.312809 ms
+CSR time: 71.081007 ms
+PredictLU time: 2140.378889 ms
+Leveling time: 0.000000 ms
+Symbolic preparation time (total): 4685.776335 ms
+Numeric LU time (including GPU setup/transfers): 180.465313 ms
+Triangular solve time (CPU): 7.238244 ms
+Iterative refinement time (CPU): 48.884881 ms
+Refinement iterations: 0
+Refinement status: converged
+Ax-b (1-norm): 1.224016232549046e-08
+Ax-b (2-norm): 6.0606695527580156e-09
+Ax-b (infinite-norm): 5.6163445478662145e-09
+read_parse_s=0.370759984
+rhs_read_s=0.000048654
+preprocess_s=2.169780998
+ordering_s=0.065099632
+symbolic_s=2.381943932
+analysis_other_s=0.075420202
+context_init_s=0.089455660
+workspace_alloc_s=0.001510419
+kernel_compile_s=0.000000000
+plan_upload_s=0.002510017
+cleanup_s=0.001207088
+value_h2d_s=0.002707542
+numeric_factor_s=0.167150179
+triangular_solve_s=0.006207750
+solution_d2h_s=0.000000000
+refinement_s=0.052665469
+sync_s=0.000000000
+residual_check_s=0.049448080
+output_write_s=0.101276811
+logging_s=0.000288751
+factor_d2h_s=0.002774257 (included in refinement: host solve path preparation)
+total_solve_ms=254.519685000
+hctxAutoStart called! 
+hcToolsExtPid_UsedPort:3335565-39867
+Tracer client send Connect Ack: 0, pid: 3335565
+Interact with tools, pid: 3335565
+once_s=5.157737 solve_s=0.228731 post_s=0.151014
+(Tracer): 16:54:06 [INFO ] User process ends execution.
+(Tracer): 16:54:06 [DEBUG] subprocess ends execution.
+(Tracer): 16:54:06 [INFO ] Tracer ends execution.

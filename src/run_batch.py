@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run lu_cmd sequentially and collect stage timings and residuals."""
+"""Run lu_cmd sequentially and collect timings and GPU/CPU solution errors."""
 
 import argparse
 import csv
 from datetime import datetime
 import math
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -23,31 +24,52 @@ METRICS = {
     "Symbolic preparation time (total):": ("symbolic_preparation_time", float),
     "Numeric LU time (including GPU setup/transfers):": ("numeric_lu_time", float),
     "Triangular solve time (CPU):": ("triangular_solve_time", float),
-    "Task 1 total solve time (T_gpu):": ("total_solve_ms", float),
-    "Ax-b (1-norm):": ("residual_l1", float),
-    "Ax-b (2-norm):": ("residual_l2", float),
-    "Ax-b (infinite-norm):": ("residual_linf", float),
+    "GPU-CPU absolute L2 error:": ("solution_error_l2", float),
+    "GPU-CPU relative L2 error:": ("relative_solution_error_l2", float),
+    "Ax-b (1-norm):": ("axb_residual_l1", float),
+    "Ax-b (2-norm):": ("axb_residual_l2", float),
+    "Ax-b (infinite-norm):": ("axb_residual_linf", float),
 }
+TIMING_FIELDS = ("once_s", "solve_s", "post_s", "total_solve_ms")
 FIELDS = [
     "matrix", "update_strategy", "scheduling", "perturb", "symbolic_backend", "status", "exit_code",
     "n", "nnz", "preprocessing_time", "symbolic_time", "csr_time",
     "predictlu_time", "leveling_time", "symbolic_preparation_time",
-    "numeric_lu_time", "triangular_solve_time", "total_solve_ms",
-    "residual_l1", "residual_l2", "residual_linf", "log_path", "solution_path", "note",
+    "numeric_lu_time", "triangular_solve_time", "once_s", "solve_s", "post_s", "total_solve_ms",
+    "solution_error_l2", "relative_solution_error_l2",
+    "axb_residual_l1", "axb_residual_l2", "axb_residual_linf", "log_path", "solution_path", "note",
 ]
 
 
 def parse_metrics(log_path):
     metrics = {}
+    summary_count = 0
     with log_path.open(encoding="utf-8", errors="replace") as log:
         for line in log:
             line = line.strip()
+            if line.startswith("once_s="):
+                summary_count += 1
+                match = re.fullmatch(r"once_s=(\S+) solve_s=(\S+) post_s=(\S+)", line)
+                if match:
+                    try:
+                        once, solve, post = map(float, match.groups())
+                        metrics.update(once_s=once, solve_s=solve, post_s=post,
+                                       total_solve_ms=(0.005 * once + solve) * 1000.0)
+                    except ValueError:
+                        metrics.update({field: float("nan") for field in TIMING_FIELDS})
+                else:
+                    metrics.update({field: float("nan") for field in TIMING_FIELDS})
+                # Require the exact terminal protocol, including six decimals.
+                if not re.fullmatch(r"once_s=\d+\.\d{6} solve_s=\d+\.\d{6} post_s=\d+\.\d{6}", line):
+                    metrics["total_solve_ms"] = float("nan")
             for label, (field, convert) in METRICS.items():
                 if line.startswith(label):
                     try:
                         metrics[field] = convert(line[len(label):].split()[0])
                     except (ValueError, IndexError):
                         pass
+    if summary_count > 1:
+        metrics["total_solve_ms"] = float("nan")
     return metrics
 
 
@@ -56,6 +78,9 @@ def main():
     parser.add_argument("--matrix-dir", type=Path, default=SOURCE_DIR / "matrix",
                         help="matrix directory, searched recursively for *.mtx")
     parser.add_argument("--solver", type=Path, default=SOURCE_DIR / "lu_cmd")
+    parser.add_argument("--cpu-reference-dir", type=Path,
+                        default=SOURCE_DIR / "KLU_standalone" / "test_result",
+                        help="existing CPU solutions named <matrix_stem>_x.txt; evaluation is excluded from stage timings")
     parser.add_argument("--output-dir", type=Path,
                         help="new output directory (must not already exist)")
     parser.add_argument("--update-strategy", choices=["right-looking", "left-looking"],
@@ -68,7 +93,7 @@ def main():
     parser.add_argument("--progress", action="store_true",
                         help="flush solver stage diagnostics to solver.log while running")
     parser.add_argument("--residual-tol", type=float, default=1e-6,
-                        help="absolute ||Ax-b||_2 target (default: 1e-6)")
+                        help="absolute ||x_GPU-x_CPU||_2 target and Ax-b refinement tolerance (default: 1e-6)")
     parser.add_argument("--max-refine-iters", default="n",
                         help="maximum correction solves; n = matrix order (default), 0 disables corrections")
     parser.add_argument("--timeout", type=float, default=0,
@@ -116,6 +141,7 @@ def main():
         parser.error("synchronization-free requires --update-strategy left-looking")
 
     solver = args.solver.resolve()
+    cpu_reference_dir = args.cpu_reference_dir.resolve()
     matrix_dir = args.matrix_dir.resolve()
     if not solver.is_file() or not os.access(str(solver), os.X_OK):
         parser.error("solver is not executable: {}; build with make -C src MAIN".format(solver))
@@ -151,7 +177,8 @@ def main():
             solution_path = run_dir / "x.dat"
             command = [str(solver), "-i", str(matrix), "-u", args.update_strategy,
                        "-s", args.scheduling, "--residual-tol", str(args.residual_tol),
-                       "--max-refine-iters", str(args.max_refine_iters), "--symbolic-backend", args.symbolic_backend]
+                       "--max-refine-iters", str(args.max_refine_iters), "--symbolic-backend", args.symbolic_backend,
+                       "--cpu-reference", str(cpu_reference_dir / (matrix.stem + "_x.txt"))]
             for name in ("symbolic_sf_workers", "symbolic_pool_entries", "symbolic_max_pool_entries"):
                 if getattr(args, name):
                     command.extend(["--" + name.replace("_", "-"), str(getattr(args, name))])
@@ -185,7 +212,7 @@ def main():
                     if result.returncode != 0:
                         if result.returncode == 2:
                             row.update(status="residual_not_converged",
-                                       note="solver did not reach the residual L2 target")
+                                       note="solver did not reach the GPU-CPU absolute L2 target")
                         else:
                             row.update(status="failed", note="solver returned a nonzero exit code")
                 except subprocess.TimeoutExpired:
@@ -196,7 +223,8 @@ def main():
 
             metrics = parse_metrics(log_path)
             row.update(metrics)
-            missing = [field for field, _ in METRICS.values() if field not in metrics]
+            required = [field for field, _ in METRICS.values()] + list(TIMING_FIELDS)
+            missing = [field for field in required if field not in metrics]
             invalid = [field for field, value in metrics.items()
                        if not math.isfinite(value) or value < 0 or (field == "n" and value == 0)]
             if row["status"] == "ok":
@@ -204,16 +232,17 @@ def main():
                     row.update(status="missing_metrics", note="missing: " + ", ".join(missing))
                 elif invalid:
                     row.update(status="invalid_metrics", note="invalid: " + ", ".join(invalid))
-                elif metrics["residual_l2"] > args.residual_tol:
+                elif metrics["solution_error_l2"] > args.residual_tol:
                     row.update(status="residual_not_converged",
-                               note="residual L2 exceeds {}".format(args.residual_tol))
+                               note="GPU-CPU absolute L2 error exceeds {}".format(args.residual_tol))
             if solution_path.is_file():
                 row["solution_path"] = str(solution_path.relative_to(output_dir))
             writer.writerow(row)
             csv_file.flush()
             failed += row["status"] != "ok"
-            print("  {} | total_solve_ms={}".format(
-                row["status"], row.get("total_solve_ms", "")),
+            print("  {} | total_solve_ms={} | GPU-CPU L2={} | relative L2={}".format(
+                row["status"], row.get("total_solve_ms", ""),
+                row.get("solution_error_l2", ""), row.get("relative_solution_error_l2", "")),
                 flush=True)
 
     print("Finished: {} ok, {} failed. CSV: {}".format(

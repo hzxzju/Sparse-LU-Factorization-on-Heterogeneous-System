@@ -23,6 +23,7 @@ parser.add_argument('--sf-workers', type=int, default=0)
 parser.add_argument('--progress', action='store_true')
 parser.add_argument('--residual-tol', type=float, default=1e-6)
 parser.add_argument('--max-refine-iters', default='n')
+parser.add_argument('--cpu-reference', required=True)
 parser.add_argument('--symbolic-backend', choices=['auto', 'cpu', 'gpu', 'gpu-sf'], default='auto')
 parser.add_argument('--symbolic-sf-workers', type=int, default=0)
 parser.add_argument('--symbolic-pool-entries', type=int, default=0)
@@ -32,6 +33,7 @@ parser.add_argument('--symbolic-batch-cols', type=int, default=128)
 parser.add_argument('--symbolic-verify', action='store_true')
 parser.add_argument('--symbolic-no-fallback', action='store_true')
 args = parser.parse_args()
+print('cpu_reference={}'.format(args.cpu_reference), flush=True)
 print('symbolic_batch_cols={}'.format(args.symbolic_batch_cols), flush=True)
 mode = Path(args.i).stem
 print('tolerance={} limit={}'.format(args.residual_tol, args.max_refine_iters), flush=True)
@@ -57,12 +59,23 @@ print('Numeric LU time (including GPU setup/transfers): 8.5 ms')
 print('Numeric LU compute time (wall-clock): 5 ms')
 print('Total GPU time: 7 ms')
 print('Triangular solve time (CPU): 0.5 ms')
-print('Task 1 total solve time (T_gpu): {} ms'.format('nan' if mode == 'invalid' else '13.75'))
+print('Task 1 total solve time (T_gpu): 13.75 ms')  # Old wall time must be ignored.
+print('total_solve_ms=999')  # Derive weighting from the terminal summary instead.
+print('GPU-CPU absolute L2 error: {}'.format('0.000002' if mode in ('unconverged', 'exit2') else 'nan' if mode == 'invalid_error' else '0.0000002'))
+if mode != 'missing_comparison':
+    print('GPU-CPU relative L2 error: 0.0000001')
 print('Ax-b (1-norm): 0.000003')
-print('Ax-b (2-norm): {}'.format('0.000002' if mode in ('unconverged', 'exit2') else '0.0000002'))
+print('Ax-b (2-norm): {}'.format('10' if mode == 'large_axb' else '0.0000002'))
 if mode != 'missing':
     print('Ax-b (infinite-norm): 0.000001')
 Path('x.dat').write_text('1\\n' * 4)
+if mode != 'missing_summary':
+    once = 'nan' if mode == 'invalid' else '-0.010000' if mode == 'negative' else '0.010000'
+    solve = 'inf' if mode == 'infinite_solve' else '0.004000'
+    post = 'nan' if mode == 'invalid_post' else '0.002000'
+    summary = 'once_s={} solve_s={} post_s={}'.format(once, solve, post)
+    print(summary)
+    if mode == 'duplicate': print(summary)
 if mode == 'exit2':
     raise SystemExit(2)
 '''
@@ -113,11 +126,35 @@ class BatchTimingTests(unittest.TestCase):
         expected = dict(n=4, nnz=8, preprocessing_time=1.25, symbolic_time=2.5,
                         csr_time=0.25, predictlu_time=0.75, leveling_time=0,
                         symbolic_preparation_time=3.5, numeric_lu_time=8.5,
-                        triangular_solve_time=0.5, total_solve_ms=13.75,
-                        residual_l1=3e-6, residual_l2=2e-7, residual_linf=1e-6)
+                        triangular_solve_time=0.5, once_s=0.01, solve_s=0.004, post_s=0.002, total_solve_ms=4.05,
+                        solution_error_l2=2e-7, relative_solution_error_l2=1e-7,
+                        axb_residual_l1=3e-6, axb_residual_l2=2e-7, axb_residual_linf=1e-6)
         for field, value in expected.items():
             self.assertEqual(float(row[field]), value, field)
         self.assertEqual((self.output / row["solution_path"]).read_text(), "1\n" * 4)
+
+    def test_solution_comparison_controls_target_and_requires_both_norms(self):
+        result, rows = self.run_batch(["invalid_error", "large_axb", "missing_comparison", "unconverged"])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([row["status"] for row in rows],
+                         ["invalid_metrics", "ok", "missing_metrics", "residual_not_converged"])
+        self.assertEqual(float(rows[1]["axb_residual_l2"]), 10)
+        self.assertIn("GPU-CPU absolute L2", rows[3]["note"])
+
+    def test_existing_cpu_reference_path_reaches_solver(self):
+        reference_dir = self.root / "CPU results"
+        result, rows = self.run_batch(["small"], "--cpu-reference-dir", str(reference_dir))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cpu_reference=" + str(reference_dir / "small_x.txt"),
+                      (self.output / rows[0]["log_path"]).read_text())
+
+    def test_invalid_or_missing_terminal_summary_is_rejected(self):
+        result, rows = self.run_batch(["duplicate", "infinite_solve", "invalid_post",
+                                      "missing_summary", "negative"])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([row["status"] for row in rows],
+                         ["invalid_metrics", "invalid_metrics", "invalid_metrics",
+                          "missing_metrics", "invalid_metrics"])
 
     def test_left_looking_sync_free_and_perturb_forwarding(self):
         result, rows = self.run_batch(["small"], "--update-strategy", "left-looking",
